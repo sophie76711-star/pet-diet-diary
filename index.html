@@ -2639,10 +2639,23 @@ function App() {
             height: auto !important; max-height: 92dvh; border-radius: 18px; overflow: hidden;
             max-width: 760px !important;
           }
-          .app-shell { padding-top: 28px !important; max-width: 980px !important; font-size: 16px; }
-          /* the phone layout is tuned for a ~380px column; on a laptop everything reads too small */
+          .app-shell { padding-top: 28px !important; max-width: 980px !important; }
+          /* The phone layout is tuned for a ~380px column; scale the small text up on a laptop
+             so the calendar, list and buttons stay readable at desktop viewing distance. */
           .app-shell h1 { font-size: 30px !important; }
           .modal-sheet h3 { font-size: 21px !important; }
+          .app-shell button, .app-shell input, .app-shell select, .app-shell textarea,
+          .modal-sheet button, .modal-sheet input, .modal-sheet select, .modal-sheet textarea { font-size: 15px; }
+          .app-shell div, .app-shell span, .modal-sheet div, .modal-sheet span { font-size: inherit; }
+          .app-shell, .modal-sheet { font-size: 15px; }
+          .app-shell [style*="font-size: 10px"], .modal-sheet [style*="font-size: 10px"] { font-size: 12px !important; }
+          .app-shell [style*="font-size: 11px"], .modal-sheet [style*="font-size: 11px"] { font-size: 13px !important; }
+          .app-shell [style*="font-size: 12px"], .modal-sheet [style*="font-size: 12px"] { font-size: 14px !important; }
+          .app-shell [style*="font-size: 13px"], .modal-sheet [style*="font-size: 13px"] { font-size: 15px !important; }
+          .app-shell [style*="font-size: 14px"], .modal-sheet [style*="font-size: 14px"] { font-size: 16px !important; }
+          .app-shell [style*="font-size: 15px"], .modal-sheet [style*="font-size: 15px"] { font-size: 17px !important; }
+          /* Calendar tiles get very tall when the grid is wide; cap them and enlarge the numbers */
+          .app-shell [style*="aspect-ratio"] { aspect-ratio: auto !important; min-height: 76px; }
         }
       `}</style>
 
@@ -2723,21 +2736,6 @@ function App() {
         ) : (
           // ---- Layer 3: section detail, with a way back to the hub ----
           <div>
-            {/* Back + current section name, so the cards below don't need to repeat their own title */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <button onClick={() => setTab(null)} style={{
-                display: "flex", alignItems: "center", gap: 2, background: "none", border: "none", cursor: "pointer",
-                color: COLORS.inkSoft, fontSize: 13, fontWeight: 600, padding: 0, flexShrink: 0,
-              }}>
-                <ChevronLeft size={16} />返回
-              </button>
-              <span style={{ color: COLORS.line }}>|</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 15, color: COLORS.ink }}>
-                {TAB_META[tab]?.Icon && React.createElement(TAB_META[tab].Icon, { size: 16, color: COLORS.accent })}
-                {TAB_META[tab]?.label}
-              </div>
-            </div>
-
             {tab === "dashboard" && (
               <Dashboard
                 records={records} products={products}
