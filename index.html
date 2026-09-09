@@ -1385,7 +1385,8 @@ function ExportPanel({ records, products, petName }) {
       if (navigator.canShare) {
         const file = new File([blob], filename, { type: mime });
         if (navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: filename });
+          // Share only the file: passing a title makes iOS save an extra "文字" text item next to the xlsx
+          await navigator.share({ files: [file] });
           return "shared";
         }
       }
@@ -1426,7 +1427,7 @@ function ExportPanel({ records, products, petName }) {
 
     const result = await deliverFile(blob, filename, mime);
     if (result === "opened") setNotice("已在新分頁開啟檔案。如果畫面顯示的是亂碼，請點瀏覽器選單裡的「下載」或「儲存檔案」。");
-    else if (result === "shared") setNotice("已開啟分享／儲存選單，請選擇「儲存至檔案」。");
+    else if (result === "shared") setNotice("已開啟分享選單：選 Excel／Numbers／Google 試算表可直接開啟，選「儲存到檔案」則存到手機。");
   };
 
   const opt = (val, label) => (
