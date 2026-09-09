@@ -327,7 +327,7 @@ function BristolPlaceholder({ compact }) {
 }
 
 // ---------- Record Form (used for add / edit) ----------
-function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct }) {
+function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions }) {
   const [date, setDate] = useState(initial?.date || todayStr());
   const [productId, setProductId] = useState(initial?.productId || (products[0]?.id ?? ""));
   const [breakfast, setBreakfast] = useState(initial?.breakfast ?? 0);
@@ -361,6 +361,21 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
       other, stress,
     });
   };
+
+  const actions = (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+      <div>
+        {initial && onDelete && (
+          <Btn variant="danger" onClick={() => onDelete(initial.id)}><Trash2 size={15} />刪除</Btn>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn variant="ghost" onClick={onCancel}>取消</Btn>
+        <Btn onClick={handleSave}><Check size={15} />儲存</Btn>
+      </div>
+    </div>
+  );
+  useEffect(() => { if (renderActions) renderActions(actions); });
 
   return (
     <div>
@@ -438,17 +453,8 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
           style={{ ...inputStyle, resize: "vertical", minHeight: 140 }} placeholder="今天的觀察、餵食方式、偷吃了什麼..." />
       </Field>
 
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18, marginBottom: 8, gap: 10, flexWrap: "wrap" }}>
-        <div>
-          {initial && onDelete && (
-            <Btn variant="danger" onClick={() => onDelete(initial.id)}><Trash2 size={15} />刪除</Btn>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <Btn variant="ghost" onClick={onCancel}>取消</Btn>
-          <Btn onClick={handleSave}><Check size={15} />儲存</Btn>
-        </div>
-      </div>
+      {/* When a Modal pins these, it calls renderActions instead of showing them inline */}
+      {!renderActions && actions}
     </div>
   );
 }
@@ -502,7 +508,20 @@ function ProductForm({ initial, onSave, onCancel, onDelete }) {
 }
 
 // ---------- Modal ----------
-function Modal({ title, onClose, children, width = 480 }) {
+// Full-screen sheet with a fixed header: on a phone the record form is long, so a small
+// floating box meant the close button scrolled away and the page behind kept moving.
+function Modal({ title, onClose, children, width = 480, footer }) {
+  // Close on the hardware/gesture back action so it behaves like a real page
+  useEffect(() => {
+    window.history.pushState({ modal: true }, "");
+    const onPop = () => onClose();
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      if (window.history.state && window.history.state.modal) window.history.back();
+    };
+  }, []); // eslint-disable-line
+
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(38,51,46,0.45)", zIndex: 50,
@@ -511,19 +530,37 @@ function Modal({ title, onClose, children, width = 480 }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: COLORS.bg, width: "100%", maxWidth: width, overflowY: "auto",
-          // dvh tracks the visible area, so the sheet shrinks instead of hiding behind the keyboard
-          maxHeight: "88dvh",
-          borderRadius: "18px 18px 0 0", padding: 20,
-          paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)",
-          boxShadow: "0 -6px 30px rgba(0,0,0,0.2)", WebkitOverflowScrolling: "touch",
+          background: COLORS.bg, width: "100%", maxWidth: width,
+          height: "100dvh", display: "flex", flexDirection: "column",
+          boxShadow: "0 -6px 30px rgba(0,0,0,0.2)",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontFamily: "'Source Serif 4', serif", fontSize: 19, color: COLORS.ink }}>{title}</h3>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft }}><X size={22} /></button>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
+          padding: "12px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 14px)",
+          borderBottom: `1px solid ${COLORS.line}`, background: COLORS.bg,
+        }}>
+          <button onClick={onClose} style={{
+            display: "flex", alignItems: "center", gap: 2, background: "none", border: "none",
+            cursor: "pointer", color: COLORS.accent, fontSize: 14, fontWeight: 600, padding: 0, flexShrink: 0,
+          }}><ChevronLeft size={18} />返回</button>
+          <h3 style={{
+            margin: 0, flex: 1, textAlign: "center", fontFamily: "'Source Serif 4', serif",
+            fontSize: 17, color: COLORS.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>{title}</h3>
+          <div style={{ width: 52, flexShrink: 0 }} />
         </div>
-        {children}
+
+        <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 16, paddingBottom: 24 }}>
+          {children}
+        </div>
+
+        {footer && (
+          <div style={{
+            flexShrink: 0, borderTop: `1px solid ${COLORS.line}`, background: COLORS.bg,
+            padding: "12px 16px", paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)",
+          }}>{footer}</div>
+        )}
       </div>
     </div>
   );
@@ -1186,6 +1223,7 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [addOpen, setAddOpen] = useState(false);
+  const [addActions, setAddActions] = useState(null); // action row lifted out of the form so the Modal can pin it
 
   const sorted = useMemo(() => [...records].sort((a, b) => b.date.localeCompare(a.date)), [records]);
   const withFlags = useMemo(() => sorted.map((r) => ({ ...r, _flags: flagsForRecord(r) })), [sorted]);
@@ -1369,13 +1407,14 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
       </div>
 
       {addOpen && (
-        <Modal title="新增紀錄" onClose={() => setAddOpen(false)}>
+        <Modal title="新增紀錄" onClose={() => setAddOpen(false)} footer={addActions}>
           <RecordForm
             products={products}
             existingDates={existingDates}
             onSave={(rec) => { onAddRecord(rec); setAddOpen(false); }}
             onCancel={() => setAddOpen(false)}
             onQuickAddProduct={onQuickAddProduct}
+            renderActions={setAddActions}
           />
         </Modal>
       )}
