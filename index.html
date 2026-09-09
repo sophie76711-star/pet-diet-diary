@@ -12,11 +12,26 @@
   #boot { font-family: -apple-system, system-ui, sans-serif; color: #66766E; text-align: center; padding: 60px 20px; font-size: 14px; }
 </style>
 
-<!-- Libraries (all from public CDNs; nothing to install) -->
+<script>
+  // Surface any load/compile/runtime failure on screen instead of a silent "載入中…"
+  function showErr(msg) {
+    var b = document.getElementById("boot");
+    if (!b) return;
+    b.innerHTML = '<div style="color:#B1503A;text-align:left;white-space:pre-wrap;font-size:13px;line-height:1.5">載入失敗，請把這段截圖給 Claude：\n\n' + msg + '</div>';
+  }
+  window.addEventListener("error", function (e) {
+    var where = e.filename ? " @ " + e.filename.split("/").pop() + ":" + e.lineno : "";
+    showErr((e.message || String(e)) + where);
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e.reason; showErr("Promise: " + (r && (r.message || r.code || r) || r));
+  });
+</script>
+
+<!-- Libraries (public CDNs; nothing to install) -->
 <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-<script src="https://unpkg.com/lucide-react@0.383.0/dist/umd/lucide-react.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
@@ -26,6 +41,19 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
 <script>
+  // Verify every library actually arrived before the app tries to use it
+  (function () {
+    var missing = [];
+    if (!window.React) missing.push("React");
+    if (!window.ReactDOM) missing.push("ReactDOM");
+    if (!window.Recharts) missing.push("Recharts");
+    if (!window.d3) missing.push("d3");
+    if (!window.XLSX) missing.push("XLSX");
+    if (!window.Babel) missing.push("Babel");
+    if (!window.firebase) missing.push("firebase");
+    if (missing.length) showErr("有套件沒載入成功：" + missing.join(", ") + "\n（請確認網路正常後重新整理）");
+  })();
+
   // ---- Firebase project config (web API keys are public by design; access is controlled by Firestore rules) ----
   const firebaseConfig = {
     apiKey: "AIzaSyBr4OtGSYf8acst231oLk00JrzqmqxhXEM",
@@ -69,9 +97,30 @@
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const { ComposedChart, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceArea, ResponsiveContainer, Scatter } = Recharts;
-const LR = window.LucideReact || window["lucide-react"];
-const { Plus, Pencil, Trash2, Download, X, Stethoscope, User, Search,
-  ChevronLeft, ChevronRight, ChevronDown, AlertCircle, Check, Home, Maximize2, ZoomIn, ZoomOut, MessageSquare } = LR;
+
+// Minimal inline versions of the lucide icons this app uses (24x24, 2px stroke, round caps)
+const mkIcon = (paths) => ({ size = 24, color = "currentColor", style, strokeWidth = 2 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth}
+    strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true">{paths}</svg>
+);
+const Plus = mkIcon(<><path d="M5 12h14" /><path d="M12 5v14" /></>);
+const Pencil = mkIcon(<><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></>);
+const Trash2 = mkIcon(<><path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M10 11v6" /><path d="M14 11v6" /></>);
+const Download = mkIcon(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></>);
+const X = mkIcon(<><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>);
+const Stethoscope = mkIcon(<><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 12 0V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3" /><path d="M8 15v1a6 6 0 0 0 6 6a6 6 0 0 0 6-6v-4" /><circle cx="20" cy="10" r="2" /></>);
+const User = mkIcon(<><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>);
+const Search = mkIcon(<><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></>);
+const ChevronLeft = mkIcon(<path d="m15 18-6-6 6-6" />);
+const ChevronRight = mkIcon(<path d="m9 18 6-6-6-6" />);
+const ChevronDown = mkIcon(<path d="m6 9 6 6 6-6" />);
+const AlertCircle = mkIcon(<><circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" /></>);
+const Check = mkIcon(<path d="M20 6 9 17l-5-5" />);
+const Home = mkIcon(<><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M9 22V12h6v10" /></>);
+const Maximize2 = mkIcon(<><path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" /></>);
+const ZoomIn = mkIcon(<><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M11 8v6" /><path d="M8 11h6" /></>);
+const ZoomOut = mkIcon(<><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M8 11h6" /></>);
+const MessageSquare = mkIcon(<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />);
 
 // ---------- theme ----------
 const COLORS = {
