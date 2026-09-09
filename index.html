@@ -2085,13 +2085,37 @@ function ExportPanel({ records, products, petName }) {
       setWarning("這個區間內沒有任何紀錄，沒有產生檔案。請換一個日期區間試試看。");
       return;
     }
-    const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{ wch: 11 }, { wch: 14 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 7 }, { wch: 20 }, { wch: 20 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "飲食記錄");
+    // ExcelJS (not the plain XLSX writer) so the note columns can actually wrap text and
+    // get a taller row instead of being squeezed into a single clipped line.
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet("飲食記錄");
+    sheet.columns = [
+      { header: "日期", key: "日期", width: 12 },
+      { header: "產品", key: "產品", width: 15 },
+      { header: "早餐(g)", key: "早餐(g)", width: 9 },
+      { header: "晚餐(g)", key: "晚餐(g)", width: 9 },
+      { header: "睡前(g)", key: "睡前(g)", width: 9 },
+      { header: "總量(g)", key: "總量(g)", width: 9 },
+      { header: "精神分數", key: "精神分數", width: 9 },
+      { header: "便便分數", key: "便便分數", width: 9 },
+      { header: "嘔吐", key: "嘔吐", width: 7 },
+      { header: "壓力事件", key: "壓力事件", width: 34 },
+      { header: "其他", key: "其他", width: 34 },
+    ];
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).alignment = { vertical: "middle", wrapText: true };
+    rows.forEach((r) => {
+      const row = sheet.addRow(r);
+      // Wrap text on every cell so long notes break onto multiple lines instead of
+      // overflowing into (or getting hidden behind) the next column.
+      row.eachCell((cell) => { cell.alignment = { vertical: "top", wrapText: true }; });
+      // Rough auto-height: ~15px per wrapped line at this column width, minimum one line.
+      const longest = Math.max(String(r["壓力事件"] || "").length, String(r["其他"] || "").length);
+      row.height = Math.max(18, Math.ceil((longest || 1) / 24) * 15 + 6);
+    });
     const filename = `${petName || ""}飲食記錄_${currentLabel()}.xlsx`;
     const mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const wbout = await wb.xlsx.writeBuffer();
     const blob = new Blob([wbout], { type: mime });
 
     const result = await deliverFile(blob, filename, mime);
@@ -2944,10 +2968,10 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
         "https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js",
         "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
       ], function () { return !!window.d3; });
-      await load("XLSX", [
-        "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
-        "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"
-      ], function () { return !!window.XLSX; });
+      await load("ExcelJS", [
+        "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js",
+        "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"
+      ], function () { return !!window.ExcelJS; });
       await load("Babel", [
         "https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js",
         "https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"
