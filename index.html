@@ -521,26 +521,70 @@ function Modal({ title, onClose, children, width = 480 }) {
 // ---------- Day Detail (read view, used by vet + as base for owner edit) ----------
 function DayDetail({ record, product }) {
   const total = record.breakfast + record.dinner + record.bedtime;
-  const Row = ({ label, value }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${COLORS.line}` }}>
-      <span style={{ color: COLORS.inkSoft, fontSize: 13 }}>{label}</span>
-      <span style={{ fontWeight: 600, fontSize: 14, color: COLORS.ink }}>{value}</span>
+  const meals = [
+    { label: "早餐", value: record.breakfast },
+    { label: "晚餐", value: record.dinner },
+    { label: "睡前", value: record.bedtime },
+  ];
+  // Long free text needs its own full-width block; a label/value row squeezes it into a
+  // narrow column and makes it wrap awkwardly, which is what made this panel hard to read.
+  const NoteBlock = ({ label, text, tint }) => (
+    <div style={{ background: tint, borderRadius: 10, padding: "10px 12px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.inkSoft, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 13, color: COLORS.ink, lineHeight: 1.65 }}>{text}</div>
     </div>
   );
+
   return (
-    <div>
-      <Row label="日期" value={record.date} />
-      <Row label="食用產品" value={product?.name || "（未指定）"} />
-      <Row label="早餐" value={`${record.breakfast} g`} />
-      <Row label="晚餐" value={`${record.dinner} g`} />
-      <Row label="睡前" value={`${record.bedtime} g`} />
-      <Row label="每日總量" value={`${total} g`} />
-      <Row label="精神分數" value={`${record.mental} / 5`} />
-      <Row label="便便分數" value={`${record.stool} / 7`} />
-      <Row label="嘔吐次數" value={`${record.vomit} 次`} />
-      <Row label="壓力事件" value={record.stress || "—"} />
-      <Row label="其他備註" value={record.other || "—"} />
-      <div style={{ marginTop: 12 }}><BristolPlaceholder compact /></div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Product + total: the two things you look for first */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <LeafIcon size={15} color={COLORS.accent} />
+          <span style={{ fontWeight: 700, fontSize: 15, color: COLORS.ink }}>{product?.name || "（未指定產品）"}</span>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: COLORS.ink, lineHeight: 1.1 }}>{total} <span style={{ fontSize: 14 }}>g</span></div>
+          <div style={{ fontSize: 11, color: COLORS.inkSoft }}>每日總量</div>
+        </div>
+      </div>
+
+      {/* Meals side by side — they're one set of numbers, not three separate facts */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+        {meals.map((m) => (
+          <div key={m.label} style={{ background: COLORS.accentSoft, borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
+            <div style={{ fontSize: 11, color: COLORS.inkSoft, marginBottom: 2 }}>{m.label}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.ink }}>{m.value}<span style={{ fontSize: 11, fontWeight: 600 }}> g</span></div>
+          </div>
+        ))}
+      </div>
+
+      {/* Scores as traffic-light chips, matching the diary list */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {[
+          { label: "精神", value: record.mental, max: 5, color: mentalColor(record.mental) },
+          { label: "便便", value: record.stool, max: 7, color: stoolColor(record.stool) },
+          { label: "嘔吐", value: record.vomit, unit: "次", color: record.vomit > 0 ? COLORS.danger : COLORS.accent },
+        ].map((c) => (
+          <div key={c.label} style={{
+            flex: 1, minWidth: 88, background: c.color + "14", border: `1px solid ${c.color}44`,
+            borderRadius: 10, padding: "10px 8px", textAlign: "center",
+          }}>
+            <div style={{ fontSize: 11, color: COLORS.inkSoft, marginBottom: 2 }}>{c.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: c.color }}>
+              {c.value}<span style={{ fontSize: 11, fontWeight: 600, color: COLORS.inkSoft }}>{c.unit ? ` ${c.unit}` : ` / ${c.max}`}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {record.stress && <NoteBlock label="壓力事件" text={record.stress} tint="#F6E8BE66" />}
+      {record.other && <NoteBlock label="其他備註" text={record.other} tint={COLORS.accentSoft} />}
+
+      <details>
+        <summary style={{ cursor: "pointer", fontSize: 12, color: COLORS.inkSoft, fontWeight: 600 }}>Bristol 便便對照圖</summary>
+        <div style={{ marginTop: 8 }}><BristolPlaceholder compact /></div>
+      </details>
     </div>
   );
 }
