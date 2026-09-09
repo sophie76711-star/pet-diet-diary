@@ -2632,13 +2632,17 @@ function App() {
         * { box-sizing: border-box; }
         input, select, textarea { font-family: inherit; }
         input:focus, select:focus, textarea:focus { outline: 2px solid ${COLORS.accent}44; border-color: ${COLORS.accent}; }
-        /* On a wide screen a full-height edge-to-edge sheet looks wrong: centre a panel instead */
         @media (min-width: 640px) {
-          .modal-backdrop { padding: 24px; }
+          /* Full-screen on desktop too: the record form is long, and a small centred box
+             wastes the screen and makes everything cramped. */
+          .modal-backdrop { padding: 0; }
           .modal-sheet {
-            height: auto !important; max-height: 92dvh; border-radius: 18px; overflow: hidden;
-            max-width: 760px !important;
+            height: 100dvh !important; max-height: none; border-radius: 0;
+            max-width: none !important; width: 100% !important;
           }
+          /* Keep the content itself in a readable column inside the full-width sheet */
+          .modal-sheet > div:nth-child(2) > * { max-width: 860px; margin-left: auto; margin-right: auto; }
+          .modal-sheet > div:first-child, .modal-sheet > div:last-child { padding-left: max(24px, calc((100vw - 860px) / 2)) !important; padding-right: max(24px, calc((100vw - 860px) / 2)) !important; }
           .app-shell { padding-top: 28px !important; max-width: 980px !important; }
           /* The phone layout is tuned for a ~380px column; scale the small text up on a laptop
              so the calendar, list and buttons stay readable at desktop viewing distance. */
