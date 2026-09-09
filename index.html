@@ -846,7 +846,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
 
   return (
     <div style={{ position: "fixed", inset: 0, background: COLORS.bg, zIndex: 60, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: `1px solid ${COLORS.line}`, gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 40px)", borderBottom: `1px solid ${COLORS.line}`, gap: 8 }}>
         <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>
           <X size={20} />關閉
         </button>
@@ -1521,7 +1521,7 @@ function LandingScreen({ onEnter, pinSet }) {
   };
   return (
     <div style={{
-      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px",
+      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 48px)",
       backgroundImage: `url("${PAW_PATTERN_URL}")`, backgroundRepeat: "repeat",
     }}>
       <div style={{ textAlign: "center", marginBottom: 32 }}>
@@ -1574,7 +1574,7 @@ function LandingScreen({ onEnter, pinSet }) {
 function PinPromptScreen({ value, onChange, error, onSubmit, onCancel }) {
   return (
     <div style={{
-      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px",
+      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 48px)",
       backgroundImage: `url("${PAW_PATTERN_URL}")`, backgroundRepeat: "repeat",
     }}>
       <div style={{ width: 64, height: 64, borderRadius: 20, background: COLORS.accentSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
@@ -1647,7 +1647,7 @@ function PinSettingsForm({ currentPin, onSetPin, onRemovePin, onClose }) {
 function PetPickerScreen({ pets, role, onPick, onAdd, onEdit, onBack }) {
   return (
     <div style={{
-      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px",
+      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 48px)",
       backgroundImage: `url("${PAW_PATTERN_URL}")`, backgroundRepeat: "repeat",
     }}>
       <div style={{ textAlign: "center", marginBottom: 24 }}>
@@ -1922,9 +1922,9 @@ function App() {
         input:focus, select:focus, textarea:focus { outline: 2px solid ${COLORS.accent}44; border-color: ${COLORS.accent}; }
       `}</style>
 
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: "14px 16px 40px" }}>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "16px 16px 40px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 60px)" }}>
         {/* Nav row: back to role selection on the left; pet switch + PIN on the right */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22, gap: 8 }}>
           <button onClick={() => { setScreen("landing"); setTab(null); }} style={{
             display: "flex", alignItems: "center", gap: 3, background: "none", border: "none", padding: "4px 0",
             cursor: "pointer", color: COLORS.accent, fontSize: 13, fontWeight: 600,
