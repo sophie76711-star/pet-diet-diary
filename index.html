@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="theme-color" content="#FAFAF8" />
-<title>排除飲食日記</title>
+<title>飲食記錄</title>
 <style>
   html, body { margin: 0; padding: 0; background: #FAFAF8; }
   #root { min-height: 100vh; }
@@ -21,7 +21,6 @@
 
 <!-- App source (JSX). Kept as plain text; compiled and run by the loader below once every library is ready. -->
 <script type="text/plain" id="app-src">
-
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const { ComposedChart, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceArea, ResponsiveContainer, Scatter } = Recharts;
 
@@ -1414,8 +1413,8 @@ function ExportPanel({ records, products, petName }) {
     const ws = XLSX.utils.json_to_sheet(rows);
     ws["!cols"] = [{ wch: 11 }, { wch: 14 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 7 }, { wch: 20 }, { wch: 20 }];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "排除飲食紀錄");
-    const filename = `${petName || "排除飲食"}紀錄_${currentLabel()}.xlsx`;
+    XLSX.utils.book_append_sheet(wb, ws, "飲食記錄");
+    const filename = `${petName || ""}飲食記錄_${currentLabel()}.xlsx`;
     const mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     const blob = new Blob([wbout], { type: mime });
@@ -1439,7 +1438,7 @@ function ExportPanel({ records, products, petName }) {
         <Download size={15} color={COLORS.accent} />匯出 Excel
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        {opt("7", "最近 7 天")}{opt("30", "最近 30 天")}{opt("all", "整個排除飲食期間")}{opt("custom", "自訂日期")}
+        {opt("7", "最近 7 天")}{opt("30", "最近 30 天")}{opt("all", "全部期間")}{opt("custom", "自訂日期")}
       </div>
       {range === "custom" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
@@ -1528,7 +1527,7 @@ function LandingScreen({ onEnter, pinSet }) {
       <div style={{ textAlign: "center", marginBottom: 32 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           <PawIcon size={22} color={COLORS.accent} />
-          <h1 style={{ fontFamily: "'Source Serif 4', serif", fontSize: 26, margin: 0, color: COLORS.ink }}>排除飲食日記</h1>
+          <h1 style={{ fontFamily: "'Source Serif 4', serif", fontSize: 26, margin: 0, color: COLORS.ink }}>飲食記錄</h1>
         </div>
         <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 6 }}>請選擇要進入的介面</div>
       </div>
@@ -1683,7 +1682,7 @@ function PetPickerScreen({ pets, role, onPick, onAdd, onEdit, onBack }) {
         )}
       </div>
       <button onClick={onBack} style={{ marginTop: 22, background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
-        <ChevronLeft size={15} />回到首頁
+        <ChevronLeft size={15} />切換主人／醫師
       </button>
     </div>
   );
@@ -1923,20 +1922,14 @@ function App() {
         input:focus, select:focus, textarea:focus { outline: 2px solid ${COLORS.accent}44; border-color: ${COLORS.accent}; }
       `}</style>
 
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: "18px 16px 40px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6, gap: 8 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <PawIcon size={18} color={COLORS.accent} />
-              <h1 style={{ fontFamily: "'Source Serif 4', serif", fontSize: 24, margin: 0, color: COLORS.ink }}>
-                {currentPet ? `${currentPet.name}的排除飲食日記` : "排除飲食日記"}
-              </h1>
-            </div>
-            <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>
-              {role === "owner" ? "主人模式" : "醫師模式（唯讀）"}・資料同步於雲端
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "14px 16px 40px" }}>
+        {/* Nav row: back to role selection on the left; pet switch + PIN on the right */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 }}>
+          <button onClick={() => { setScreen("landing"); setTab(null); }} style={{
+            display: "flex", alignItems: "center", gap: 3, background: "none", border: "none", padding: "4px 0",
+            cursor: "pointer", color: COLORS.accent, fontSize: 13, fontWeight: 600,
+          }}><ChevronLeft size={16} />切換主人／醫師</button>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
             <button onClick={() => { setScreen("pets"); setTab(null); }} title="切換記錄對象" style={{
               display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
               borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
@@ -1947,10 +1940,18 @@ function App() {
                 borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
               }}><LockIcon size={14} color={ownerPin ? COLORS.accent : COLORS.inkSoft} /></button>
             )}
-            <button onClick={() => { setScreen("landing"); setTab(null); }} style={{
-              display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
-              borderRadius: 9, padding: "7px 12px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
-            }}><Home size={14} />切換介面</button>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <PawIcon size={18} color={COLORS.accent} />
+            <h1 style={{ fontFamily: "'Source Serif 4', serif", fontSize: 24, margin: 0, color: COLORS.ink }}>
+              {currentPet ? `${currentPet.name}的飲食記錄` : "飲食記錄"}
+            </h1>
+          </div>
+          <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>
+            {role === "owner" ? "主人模式" : "醫師模式（唯讀）"}・資料同步於雲端
           </div>
         </div>
 
@@ -2066,7 +2067,6 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-
 
 </script>
 
