@@ -1184,32 +1184,28 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
 
   return (
     <Card>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink, display: "flex", alignItems: "center", gap: 6 }}>
-          <JournalIcon size={15} color={COLORS.accent} />飲食日記
-        </div>
-        <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {role === "owner" && !selectMode && (
-            <Btn size="sm" onClick={() => setAddOpen(true)}><Plus size={13} />新增紀錄</Btn>
+      {/* The section name already appears in the page header, so the card leads with actions instead */}
+      {role === "owner" && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          {!selectMode && (
+            <Btn size="sm" onClick={() => setAddOpen(true)} style={{ flex: 1 }}><Plus size={14} />新增紀錄</Btn>
           )}
-          {role === "owner" && !selectMode && onAddProduct && (
-            <Btn size="sm" variant="secondary" onClick={onAddProduct}><LeafIcon size={13} color={COLORS.accent} />新增產品</Btn>
+          {!selectMode && onAddProduct && (
+            <Btn size="sm" variant="secondary" onClick={onAddProduct} style={{ flex: 1 }}><LeafIcon size={14} color={COLORS.accent} />新增產品</Btn>
           )}
-          {role === "owner" && (
-            <button onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))} style={{
-              display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
-              border: `1px solid ${selectMode ? COLORS.danger : COLORS.line}`,
-              background: selectMode ? COLORS.dangerSoft : "#fff", color: selectMode ? COLORS.danger : COLORS.inkSoft,
-            }}>
-              <Trash2 size={13} />{selectMode ? "取消選取" : "刪除部分資料"}
-            </button>
+          {selectMode && (
+            <Btn size="sm" variant="ghost" onClick={exitSelectMode} style={{ flex: 1 }}>取消選取</Btn>
           )}
         </div>
-      </div>
+      )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <Search size={16} color={COLORS.inkSoft} />
-        <input placeholder="搜尋日期，例如 2026-08" value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...inputStyle, border: "none", padding: "4px 0" }} />
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+        background: "#FCFCFA", border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "8px 12px",
+      }}>
+        <Search size={15} color={COLORS.inkSoft} />
+        <input placeholder="搜尋日期，例如 2026-08" value={search} onChange={(e) => setSearch(e.target.value)}
+          style={{ ...inputStyle, border: "none", background: "transparent", padding: 0 }} />
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
@@ -1217,13 +1213,21 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
           共 {sorted.length} 天紀錄
           {flaggedCount > 0 && <span style={{ color: COLORS.danger, fontWeight: 600 }}>・{flaggedCount} 天有異常需留意</span>}
         </div>
-        {flaggedCount > 0 && !selectMode && (
-          <button onClick={() => setOnlyFlagged((v) => !v)} style={{
-            display: "flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
-            border: `1px solid ${onlyFlagged ? COLORS.danger : COLORS.line}`,
-            background: onlyFlagged ? COLORS.dangerSoft : "#fff", color: onlyFlagged ? COLORS.danger : COLORS.inkSoft,
-          }}><AlertCircle size={13} />只看異常</button>
-        )}
+        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          {flaggedCount > 0 && !selectMode && (
+            <button onClick={() => setOnlyFlagged((v) => !v)} style={{
+              display: "flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+              border: `1px solid ${onlyFlagged ? COLORS.danger : COLORS.line}`,
+              background: onlyFlagged ? COLORS.dangerSoft : "#fff", color: onlyFlagged ? COLORS.danger : COLORS.inkSoft,
+            }}><AlertCircle size={13} />只看異常</button>
+          )}
+          {role === "owner" && records.length > 0 && !selectMode && (
+            <button onClick={() => setSelectMode(true)} title="刪除部分資料" style={{
+              display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+              border: `1px solid ${COLORS.line}`, background: "#fff", color: COLORS.inkSoft,
+            }}><Trash2 size={13} />刪除</button>
+          )}
+        </div>
       </div>
 
       {selectMode && (
@@ -1440,9 +1444,6 @@ function ExportPanel({ records, products, petName }) {
 
   return (
     <Card>
-      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: COLORS.ink, display: "flex", alignItems: "center", gap: 6 }}>
-        <Download size={15} color={COLORS.accent} />匯出 Excel
-      </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
         {opt("7", "最近 7 天")}{opt("30", "最近 30 天")}{opt("all", "全部期間")}{opt("custom", "自訂日期")}
       </div>
@@ -1990,12 +1991,20 @@ function App() {
         ) : (
           // ---- Layer 3: section detail, with a way back to the hub ----
           <div>
-            <button onClick={() => setTab(null)} style={{
-              display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer",
-              color: COLORS.inkSoft, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 14,
-            }}>
-              <ChevronLeft size={16} />返回
-            </button>
+            {/* Back + current section name, so the cards below don't need to repeat their own title */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <button onClick={() => setTab(null)} style={{
+                display: "flex", alignItems: "center", gap: 2, background: "none", border: "none", cursor: "pointer",
+                color: COLORS.inkSoft, fontSize: 13, fontWeight: 600, padding: 0, flexShrink: 0,
+              }}>
+                <ChevronLeft size={16} />返回
+              </button>
+              <span style={{ color: COLORS.line }}>|</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, fontSize: 15, color: COLORS.ink }}>
+                {TAB_META[tab]?.Icon && React.createElement(TAB_META[tab].Icon, { size: 16, color: COLORS.accent })}
+                {TAB_META[tab]?.label}
+              </div>
+            </div>
 
             {tab === "dashboard" && (
               <Dashboard
