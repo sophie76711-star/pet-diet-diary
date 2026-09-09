@@ -299,9 +299,10 @@ function Field({ label, children, hint }) {
   );
 }
 
+// fontSize must be >= 16px: below that, iOS Safari auto-zooms the page whenever a field is focused
 const inputStyle = {
-  width: "100%", padding: "9px 10px", borderRadius: 9,
-  border: `1px solid ${COLORS.line}`, fontSize: 14, fontFamily: "inherit",
+  width: "100%", padding: "12px 12px", borderRadius: 10,
+  border: `1px solid ${COLORS.line}`, fontSize: 16, lineHeight: 1.6, fontFamily: "inherit",
   boxSizing: "border-box", background: "#fff", color: COLORS.ink,
 };
 
@@ -428,10 +429,16 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
         <ScoreButtons value={Number(vomit)} onChange={setVomit} min={0} max={5} color={COLORS.danger} />
       </Field>
 
-      <Field label="壓力事件"><textarea value={stress} onChange={(e) => setStress(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} placeholder="例如：搬家、有客人來訪、打雷..." /></Field>
-      <Field label="其他備註"><textarea value={other} onChange={(e) => setOther(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+      <Field label="壓力事件">
+        <textarea value={stress} onChange={(e) => setStress(e.target.value)} rows={3}
+          style={{ ...inputStyle, resize: "vertical", minHeight: 84 }} placeholder="例如：搬家、有客人來訪、打雷..." />
+      </Field>
+      <Field label="其他備註">
+        <textarea value={other} onChange={(e) => setOther(e.target.value)} rows={5}
+          style={{ ...inputStyle, resize: "vertical", minHeight: 140 }} placeholder="今天的觀察、餵食方式、偷吃了什麼..." />
+      </Field>
 
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18, gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18, marginBottom: 8, gap: 10, flexWrap: "wrap" }}>
         <div>
           {initial && onDelete && (
             <Btn variant="danger" onClick={() => onDelete(initial.id)}><Trash2 size={15} />刪除</Btn>
@@ -504,8 +511,12 @@ function Modal({ title, onClose, children, width = 480 }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: COLORS.bg, width: "100%", maxWidth: width, maxHeight: "92vh", overflowY: "auto",
-          borderRadius: "18px 18px 0 0", padding: 20, boxShadow: "0 -6px 30px rgba(0,0,0,0.2)",
+          background: COLORS.bg, width: "100%", maxWidth: width, overflowY: "auto",
+          // dvh tracks the visible area, so the sheet shrinks instead of hiding behind the keyboard
+          maxHeight: "88dvh",
+          borderRadius: "18px 18px 0 0", padding: 20,
+          paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)",
+          boxShadow: "0 -6px 30px rgba(0,0,0,0.2)", WebkitOverflowScrolling: "touch",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -581,7 +592,7 @@ function DayDetail({ record, product }) {
       {record.stress && <NoteBlock label="壓力事件" text={record.stress} tint="#F6E8BE66" />}
       {record.other && <NoteBlock label="其他備註" text={record.other} tint={COLORS.accentSoft} />}
 
-      <details>
+      <details open>
         <summary style={{ cursor: "pointer", fontSize: 12, color: COLORS.inkSoft, fontWeight: 600 }}>Bristol 便便對照圖</summary>
         <div style={{ marginTop: 8 }}><BristolPlaceholder compact /></div>
       </details>
