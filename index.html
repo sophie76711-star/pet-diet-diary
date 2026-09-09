@@ -1161,7 +1161,9 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
     return arr.filter((g) => g.visible.length > 0);
   }, [withFlags, products, search, onlyFlagged]);
 
-  const isOpen = (productId, idx) => (manualOpen.hasOwnProperty(productId) ? manualOpen[productId] : idx === 0 || searchActive);
+  // All groups start collapsed so the diary opens as a short overview; searching or filtering
+  // to abnormal days expands whatever matched, since those results are what the user asked for.
+  const isOpen = (productId, idx) => (manualOpen.hasOwnProperty(productId) ? manualOpen[productId] : searchActive);
   const toggle = (productId, idx) => setManualOpen((prev) => ({ ...prev, [productId]: !isOpen(productId, idx) }));
 
   const allVisibleIds = useMemo(() => groups.flatMap((g) => g.visible.map((r) => r.id)), [groups]);
