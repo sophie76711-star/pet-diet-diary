@@ -215,6 +215,15 @@ async function loadPetsWithMigration() {
   return pets;
 }
 
+// Intake vs the product's daily target. Under 80% reads as "ate noticeably less".
+function intakeStatus(total, target) {
+  if (!target || target <= 0) return null;
+  const pct = Math.round((total / target) * 100);
+  const color = pct < 80 ? COLORS.danger : pct < 95 ? COLORS.gold : COLORS.accent;
+  const label = pct < 80 ? "偏少" : pct > 115 ? "偏多" : "正常";
+  return { pct, color, label, diff: total - target };
+}
+
 // ---------- small UI atoms ----------
 function Btn({ children, onClick, variant = "primary", size = "md", disabled, type = "button", style }) {
   const base = {
@@ -421,13 +430,26 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
         <Field label="睡前 (g)"><input type="number" min="0" value={bedtime} onChange={(e) => setBedtime(e.target.value)} style={inputStyle} /></Field>
       </div>
 
-      <div style={{
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        background: COLORS.accentSoft, borderRadius: 10, padding: "10px 14px", marginBottom: 14,
-      }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.accent }}>每日總量（自動計算）</span>
-        <span style={{ fontSize: 18, fontWeight: 700, color: COLORS.accent }}>{total} g</span>
-      </div>
+      {(() => {
+        const target = products.find((p) => p.id === productId)?.dailyTarget;
+        const st = intakeStatus(total, target);
+        return (
+          <div style={{ background: COLORS.accentSoft, borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.accent }}>每日總量（自動計算）</span>
+              <span style={{ fontSize: 18, fontWeight: 700, color: COLORS.accent }}>{total} g</span>
+            </div>
+            {st && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6, fontSize: 12 }}>
+                <span style={{ color: COLORS.inkSoft }}>建議 {target} g</span>
+                <span style={{ color: st.color, fontWeight: 700 }}>
+                  {st.pct}%・{st.diff >= 0 ? "+" : ""}{st.diff} g（{st.label}）
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <Field label="精神分數 (0～5)">
         <ScoreButtons value={Number(mental)} onChange={setMental} min={0} max={5} color={COLORS.accent} />
@@ -465,13 +487,18 @@ function ProductForm({ initial, onSave, onCancel, onDelete }) {
   const [startDate, setStartDate] = useState(initial?.startDate || todayStr());
   const [endDate, setEndDate] = useState(initial?.endDate || "");
   const [color, setColor] = useState(initial?.color || PALETTE[0].key);
+  const [target, setTarget] = useState(initial?.dailyTarget ?? "");
   const [error, setError] = useState("");
 
   const handleSave = () => {
     if (!name.trim()) { setError("請輸入產品名稱"); return; }
     if (!startDate) { setError("請選擇開始使用日期"); return; }
     if (endDate && endDate < startDate) { setError("結束日期不能早於開始日期"); return; }
-    onSave({ id: initial?.id || uid(), name: name.trim(), startDate, endDate: endDate || null, color });
+    const t = Number(target);
+    onSave({
+      id: initial?.id || uid(), name: name.trim(), startDate, endDate: endDate || null, color,
+      dailyTarget: target === "" || !(t > 0) ? null : Math.round(t),
+    });
   };
 
   return (
@@ -482,6 +509,10 @@ function ProductForm({ initial, onSave, onCancel, onDelete }) {
         </div>
       )}
       <Field label="產品名稱"><input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} placeholder="例如：GI32" /></Field>
+      <Field label="每日建議量 (g)" hint="醫師或包裝建議的每日份量。體重改變後回來改這裡即可，可留空。">
+        <input type="number" min="0" inputMode="numeric" value={target} onChange={(e) => setTarget(e.target.value)}
+          style={inputStyle} placeholder="例如：60" />
+      </Field>
       <Field label="開始使用日期"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={inputStyle} /></Field>
       <Field label="結束使用日期" hint="可留空，表示目前仍在使用"><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={inputStyle} /></Field>
       <Field label="圖表背景顏色">
@@ -567,8 +598,9 @@ function Modal({ title, onClose, children, width = 480, footer }) {
 }
 
 // ---------- Day Detail (read view, used by vet + as base for owner edit) ----------
-function DayDetail({ record, product }) {
+function DayDetail({ record, product, products = [] }) {
   const total = record.breakfast + record.dinner + record.bedtime;
+  const ti = targetInfo(record, products.length ? products : (product ? [product] : []));
   const meals = [
     { label: "早餐", value: record.breakfast },
     { label: "晚餐", value: record.dinner },
@@ -598,10 +630,22 @@ function DayDetail({ record, product }) {
           <span style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink }}>{product?.name || "（未指定產品）"}</span>
         </div>
         <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: COLORS.ink, lineHeight: 1.1 }}>{total} <span style={{ fontSize: 14 }}>g</span></div>
-          <div style={{ fontSize: 11, color: COLORS.inkSoft }}>每日總量</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: COLORS.ink, lineHeight: 1.1 }}>
+            {total}
+            {ti && <span style={{ fontSize: 14, color: COLORS.inkSoft, fontWeight: 700 }}> / {ti.target}</span>}
+            <span style={{ fontSize: 14 }}> g</span>
+          </div>
+          <div style={{ fontSize: 11, color: ti ? ti.color : COLORS.inkSoft, fontWeight: ti ? 700 : 400 }}>
+            {ti ? `${ti.pct}%・${ti.label}` : "每日總量"}
+          </div>
         </div>
       </div>
+
+      {ti && (
+        <div style={{ height: 8, borderRadius: 4, background: COLORS.line, overflow: "hidden" }}>
+          <div style={{ width: `${Math.min(100, ti.pct)}%`, height: "100%", background: ti.color, borderRadius: 4 }} />
+        </div>
+      )}
 
       {/* Meals side by side — they're one set of numbers, not three separate facts */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
@@ -625,8 +669,11 @@ function DayDetail({ record, product }) {
             borderRadius: 10, padding: "10px 8px", textAlign: "center",
           }}>
             <div style={{ fontSize: 11, color: COLORS.inkSoft, marginBottom: 2 }}>{c.label}</div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: c.color }}>
-              {c.value}<span style={{ fontSize: 11, fontWeight: 600, color: COLORS.inkSoft }}>{c.unit ? ` ${c.unit}` : ` / ${c.max}`}</span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+              {c.label === "精神" && <CatMoodIcon score={record.mental} size={20} color={c.color} />}
+              <div style={{ fontSize: 18, fontWeight: 800, color: c.color }}>
+                {c.value}<span style={{ fontSize: 11, fontWeight: 600, color: COLORS.inkSoft }}>{c.unit ? ` ${c.unit}` : ` / ${c.max}`}</span>
+              </div>
             </div>
           </div>
         ))}
@@ -635,11 +682,63 @@ function DayDetail({ record, product }) {
       {record.stress && <NoteBlock label="壓力事件" text={record.stress} tint="#F6E8BE66" />}
       {record.other && <NoteBlock label="其他備註" text={record.other} tint={COLORS.accentSoft} />}
 
-      <details open>
-        <summary style={{ cursor: "pointer", fontSize: 12, color: COLORS.inkSoft, fontWeight: 600 }}>Bristol 便便對照圖</summary>
+      <details>
+        <summary style={{
+          cursor: "pointer", fontSize: 12, color: COLORS.accent, fontWeight: 600,
+          background: COLORS.accentSoft, borderRadius: 10, padding: "8px 12px", listStyle: "none",
+        }}>點此查看 Bristol 便便對照圖</summary>
         <div style={{ marginTop: 8 }}><BristolPlaceholder compact /></div>
       </details>
     </div>
+  );
+}
+
+// Hand-drawn cat faces for the mental score: the expression changes with the score,
+// so mood reads instantly without decoding a number.
+function CatMoodIcon({ score = 4, size = 22, color = COLORS.accent, style }) {
+  const sad = score <= 2, ok = score === 3;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+      strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true">
+      <path d="M4.6 9.4 4.1 4.6l3.9 2.5" />
+      <path d="M19.4 9.4 19.9 4.6 16 7.1" />
+      <path d="M12 5.9c4.3 0 7.4 2.9 7.4 6.6s-3.1 6.6-7.4 6.6-7.4-2.9-7.4-6.6S7.7 5.9 12 5.9z" />
+      {sad ? (<><path d="M9 11.6c.5.5 1 .5 1.5 0" /><path d="M13.5 11.6c.5.5 1 .5 1.5 0" /></>)
+           : (<><circle cx="9.6" cy="11.6" r="0.9" fill={color} stroke="none" /><circle cx="14.4" cy="11.6" r="0.9" fill={color} stroke="none" /></>)}
+      {sad ? <path d="M10.2 15.8c.9-.8 2.7-.8 3.6 0" />
+       : ok ? <path d="M10.2 15.4h3.6" />
+       : <path d="M10.2 14.9c.9.9 2.7.9 3.6 0" />}
+    </svg>
+  );
+}
+
+// ---------- Daily target helpers ----------
+// A day is judged against its own product's suggested grams; no target => no judgement.
+function targetInfo(record, products) {
+  const target = products.find((p) => p.id === record.productId)?.dailyTarget;
+  if (!target) return null;
+  const total = record.breakfast + record.dinner + record.bedtime;
+  const pct = Math.round((total / target) * 100);
+  const color = pct < 70 ? COLORS.danger : pct < 90 ? COLORS.gold : pct > 130 ? COLORS.gold : COLORS.accent;
+  const label = pct < 70 ? "明顯偏少" : pct < 90 ? "略偏少" : pct > 130 ? "偏多" : "達標";
+  return { target, total, pct, color, label };
+}
+
+// Hand-drawn cat face: mouth curve and eyes follow the mood score, so the number has a face
+function MoodDoodle({ score, size = 26, color = COLORS.accent }) {
+  const happy = score >= 4, ok = score === 3;
+  const mouth = happy ? "M9 15.2q3 2.6 6 0" : ok ? "M9.2 15.4h5.6" : "M9 16.2q3 -2.4 6 0";
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+      strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.6 9.4 4.2 4.6l3.9 2.5" />
+      <path d="M19.4 9.4 19.8 4.6l-3.9 2.5" />
+      <path d="M12 5.9c4.3 0 7.4 3 7.4 6.7S16.3 19.4 12 19.4 4.6 16.3 4.6 12.6 7.7 5.9 12 5.9z" />
+      {score <= 1
+        ? (<><path d="M8.2 11.2l1.8 1.8M10 11.2l-1.8 1.8" /><path d="M14 11.2l1.8 1.8M15.8 11.2L14 13" /></>)
+        : (<><path d="M9.1 11.6v.9" /><path d="M14.9 11.6v.9" /></>)}
+      <path d={mouth} />
+    </svg>
   );
 }
 
@@ -718,7 +817,7 @@ function DayPanelBody({ record, product, role, products, existingDates, onSave, 
         );
       })()}
 
-      <DayDetail record={record} product={product} />
+      <DayDetail record={record} product={product} products={products} />
       {role === "owner" && (
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           <Btn onClick={() => setEditing(true)}><Pencil size={14} />修改</Btn>
@@ -1354,7 +1453,10 @@ function CalendarView({ records, products, onSelect, monthOffset, onShiftMonth }
               }}
             >
               <span style={{ fontSize: 12, fontWeight: 700, color: r ? COLORS.ink : COLORS.line }}>{d}</span>
-              {r && <span style={{ fontSize: 9, color: COLORS.inkSoft, lineHeight: 1 }}>{total}g</span>}
+              {r && (() => {
+                const ti = targetInfo(r, products);
+                return <span style={{ fontSize: 9, lineHeight: 1, fontWeight: ti ? 700 : 400, color: ti ? ti.color : COLORS.inkSoft }}>{total}g</span>;
+              })()}
               {r && (
                 <span style={{ display: "flex", gap: 2, marginTop: 1 }}>
                   <span style={{ width: 5, height: 5, borderRadius: 3, background: mentalColor(r.mental) }} />
@@ -1835,6 +1937,71 @@ function buildSampleData() {
   return { products, records };
 }
 
+// ---------- Health summary shown on the hub screen ----------
+// Scores the current product period: intake vs its target, abnormal days, vomiting.
+function HealthSummary({ records, products }) {
+  if (records.length === 0) return null;
+
+  const latestDate = records.reduce((m, r) => (r.date > m ? r.date : m), records[0].date);
+  const current = products.find((p) => {
+    const s = toTs(p.startDate), e = p.endDate ? toTs(p.endDate) : Infinity;
+    return toTs(latestDate) >= s && toTs(latestDate) <= e;
+  }) || products.find((p) => !p.endDate);
+  const inPeriod = current
+    ? records.filter((r) => r.productId === current.id)
+    : records.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14);
+  if (inPeriod.length === 0) return null;
+
+  const days = inPeriod.length;
+  const avg = Math.round(inPeriod.reduce((sum, r) => sum + r.breakfast + r.dinner + r.bedtime, 0) / days);
+  const flaggedDays = inPeriod.filter((r) => flagsForRecord(r).length > 0).length;
+  const vomitDays = inPeriod.filter((r) => r.vomit > 0).length;
+  const target = current?.dailyTarget || null;
+  const pct = target ? Math.round((avg / target) * 100) : null;
+
+  // Simple, explainable scoring: start at 100 and deduct for the things that matter
+  let score = 100;
+  if (pct !== null) score -= pct < 70 ? 30 : pct < 85 ? 15 : pct > 130 ? 12 : 0;
+  score -= Math.min(30, Math.round((flaggedDays / days) * 60));
+  score -= Math.min(20, vomitDays * 8);
+  score = Math.max(0, Math.min(100, score));
+
+  const tone = score >= 80
+    ? { color: COLORS.accent, word: "狀況穩定", mood: 5 }
+    : score >= 60
+      ? { color: COLORS.gold, word: "還可以，留意一下", mood: 3 }
+      : { color: COLORS.danger, word: "需要注意", mood: 1 };
+
+  const notes = [];
+  if (pct !== null && pct < 85) notes.push(`平均只吃到建議量的 ${pct}%`);
+  else if (pct !== null && pct > 130) notes.push(`平均超過建議量 ${pct}%`);
+  else if (pct !== null) notes.push(`平均達成建議量 ${pct}%`);
+  else notes.push(`平均每天 ${avg}g（此產品未設建議量）`);
+  if (vomitDays > 0) notes.push(`${vomitDays} 天有嘔吐`);
+  if (flaggedDays > 0) notes.push(`${flaggedDays}／${days} 天有異常`);
+  else notes.push("這段期間沒有異常");
+
+  return (
+    <Card style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <MoodDoodle score={tone.mood} size={42} color={tone.color} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 22, fontWeight: 800, color: tone.color, lineHeight: 1.1 }}>{score}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: COLORS.ink }}>{tone.word}</span>
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 2 }}>
+            {current ? `${current.name}・${days} 天` : `最近 ${days} 天`}
+          </div>
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: COLORS.ink, lineHeight: 1.7, marginTop: 10 }}>
+        {notes.join("・")}
+      </div>
+    </Card>
+  );
+}
+
 // ---------- Landing screen ----------
 function LandingScreen({ onEnter, pinSet }) {
   const cardStyle = {
@@ -2280,7 +2447,9 @@ function App() {
         {loading || petLoading ? (
           <div style={{ textAlign: "center", padding: 40, color: COLORS.inkSoft }}>載入中…</div>
         ) : tab === null ? (
-          // ---- Layer 2: hub menu — hand-drawn icon tiles ----
+          // ---- Layer 2: hub menu — health summary, then hand-drawn icon tiles ----
+          <>
+          <HealthSummary records={records} products={products} />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {tabs.map(([key]) => {
               const meta = TAB_META[key];
@@ -2303,6 +2472,7 @@ function App() {
               );
             })}
           </div>
+          </>
         ) : (
           // ---- Layer 3: section detail, with a way back to the hub ----
           <div>
