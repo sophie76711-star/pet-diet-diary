@@ -638,9 +638,24 @@ function DayDetail({ record, product }) {
 }
 
 // ---------- Day panel: view first, edit only after tapping 修改 ----------
-function DayPanelBody({ record, product, role, products, existingDates, onSave, onDelete, onOpenInHistory, onQuickAddProduct }) {
+function DayPanelBody({ record, product, role, products, existingDates, onSave, onDelete, onOpenInHistory, onQuickAddProduct, onPrevDay, onNextDay, prevDate, nextDate }) {
   const [editing, setEditing] = useState(false);
+  const touch = useRef(null);
   if (!record) return null;
+
+  // Horizontal swipe steps to the previous / next recorded day (only while viewing, not editing)
+  const swipeHandlers = (onPrevDay || onNextDay) && !editing ? {
+    onTouchStart: (e) => { touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; },
+    onTouchEnd: (e) => {
+      if (!touch.current) return;
+      const dx = e.changedTouches[0].clientX - touch.current.x;
+      const dy = e.changedTouches[0].clientY - touch.current.y;
+      touch.current = null;
+      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return; // ignore vertical scrolls
+      if (dx > 0 && onPrevDay) onPrevDay();
+      if (dx < 0 && onNextDay) onNextDay();
+    },
+  } : {};
 
   if (editing && role === "owner") {
     return (
@@ -658,7 +673,22 @@ function DayPanelBody({ record, product, role, products, existingDates, onSave, 
   }
 
   return (
-    <div>
+    <div {...swipeHandlers}>
+      {(onPrevDay || onNextDay) && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
+          <button onClick={onPrevDay || undefined} disabled={!onPrevDay} style={{
+            display: "flex", alignItems: "center", gap: 2, background: "none", border: "none",
+            cursor: onPrevDay ? "pointer" : "default", color: onPrevDay ? COLORS.accent : COLORS.line,
+            fontSize: 12, fontWeight: 600, padding: 0,
+          }}><ChevronLeft size={15} />{prevDate ? prevDate.slice(5) : "前一天"}</button>
+          <span style={{ fontSize: 11, color: COLORS.inkSoft }}>左右滑動可換日期</span>
+          <button onClick={onNextDay || undefined} disabled={!onNextDay} style={{
+            display: "flex", alignItems: "center", gap: 2, background: "none", border: "none",
+            cursor: onNextDay ? "pointer" : "default", color: onNextDay ? COLORS.accent : COLORS.line,
+            fontSize: 12, fontWeight: 600, padding: 0,
+          }}>{nextDate ? nextDate.slice(5) : "後一天"}<ChevronRight size={15} /></button>
+        </div>
+      )}
       <DayDetail record={record} product={product} />
       {role === "owner" && (
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
@@ -1198,20 +1228,15 @@ function RecordRow({ r, onSelect, selectMode, selected, onToggleSelect }) {
 
       {note && (
         <div style={{
-          display: "flex", alignItems: "flex-start", gap: 5, marginTop: 6,
+          display: "flex", alignItems: "center", gap: 5, marginTop: 6, minWidth: 0,
           fontSize: 12, color: COLORS.ink, background: flagged ? "#fff" : COLORS.accentSoft,
-          borderRadius: 8, padding: "6px 8px",
+          borderRadius: 8, padding: "5px 8px",
         }}>
           <MessageSquare size={13} color={COLORS.accent} style={{ marginTop: 1, flexShrink: 0 }} />
-          <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{note}</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{note}</span>
         </div>
       )}
 
-      {flagged && (
-        <div style={{ fontSize: 11, color: COLORS.danger, fontWeight: 600, marginTop: 6 }}>
-          {r._flags.map((f) => f.label).join("・")}
-        </div>
-      )}
     </button>
   );
 }
@@ -2139,21 +2164,31 @@ function App() {
           <ProductForm initial={modal.payload} onSave={saveProduct} onCancel={() => setModal(null)} onDelete={deleteProduct} />
         </Modal>
       )}
-      {modal?.type === "dayPanel" && (
-        <Modal title={`${modal.payload.date} 紀錄`} onClose={() => setModal(null)}>
-          <DayPanelBody
-            key={modal.payload.date}
-            record={modal.payload}
-            product={products.find((p) => p.id === modal.payload.productId)}
-            role={role}
-            products={products}
-            existingDates={existingDates}
-            onSave={(rec) => { saveRecord(rec); }}
-            onDelete={(id) => { deleteRecord(id); }}
-            onQuickAddProduct={quickAddProduct}
-          />
-        </Modal>
-      )}
+      {modal?.type === "dayPanel" && (() => {
+        // Days in date order, so the panel can step to the previous / next recorded day
+        const ordered = [...records].sort((a, b) => a.date.localeCompare(b.date));
+        const idx = ordered.findIndex((r) => r.id === modal.payload.id);
+        const goTo = (i) => { if (ordered[i]) setModal({ type: "dayPanel", payload: ordered[i] }); };
+        return (
+          <Modal title={`${modal.payload.date} 紀錄`} onClose={() => setModal(null)}>
+            <DayPanelBody
+              key={modal.payload.date}
+              record={modal.payload}
+              product={products.find((p) => p.id === modal.payload.productId)}
+              role={role}
+              products={products}
+              existingDates={existingDates}
+              onSave={(rec) => { saveRecord(rec); }}
+              onDelete={(id) => { deleteRecord(id); }}
+              onQuickAddProduct={quickAddProduct}
+              onPrevDay={idx > 0 ? () => goTo(idx - 1) : null}
+              onNextDay={idx >= 0 && idx < ordered.length - 1 ? () => goTo(idx + 1) : null}
+              prevDate={idx > 0 ? ordered[idx - 1].date : null}
+              nextDate={idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1].date : null}
+            />
+          </Modal>
+        );
+      })()}
 
       {pinSettingsOpen && (
         <Modal title="PIN 保護設定" onClose={() => setPinSettingsOpen(false)}>
