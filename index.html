@@ -587,9 +587,15 @@ function DayDetail({ record, product }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {/* Product + total: the two things you look for first */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-          <LeafIcon size={15} color={COLORS.accent} />
-          <span style={{ fontWeight: 700, fontSize: 15, color: COLORS.ink }}>{product?.name || "（未指定產品）"}</span>
+        {/* Product shown as a pill in its own palette colour, so the feed is identifiable
+            at a glance and matches the colour used on the charts and the diary list */}
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0,
+          background: swatch(product?.color).bg, border: `1.5px solid ${swatch(product?.color).border}`,
+          borderRadius: 999, padding: "6px 12px",
+        }}>
+          <LeafIcon size={14} color={swatch(product?.color).border} />
+          <span style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink }}>{product?.name || "（未指定產品）"}</span>
         </div>
         <div style={{ textAlign: "right", flexShrink: 0 }}>
           <div style={{ fontSize: 22, fontWeight: 800, color: COLORS.ink, lineHeight: 1.1 }}>{total} <span style={{ fontSize: 14 }}>g</span></div>
@@ -674,35 +680,43 @@ function DayPanelBody({ record, product, role, products, existingDates, onSave, 
 
   return (
     <div {...swipeHandlers}>
-      {/* Day navigation sits in its own row under the header: floating arrows over the
-          content covered the notes, and the arrows are still obvious here. */}
-      {(onPrevDay || onNextDay) && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
-          <button onClick={onPrevDay || undefined} disabled={!onPrevDay} aria-label="前一天" style={{
-            width: 42, height: 42, borderRadius: 21, flexShrink: 0,
-            border: `1px solid ${onPrevDay ? COLORS.accent : COLORS.line}`,
-            background: onPrevDay ? COLORS.accentSoft : "#fff",
-            color: onPrevDay ? COLORS.accent : COLORS.line,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: onPrevDay ? "pointer" : "default",
-          }}><ChevronLeft size={22} /></button>
+      {/* Arrows flank the date itself, so it's obvious they step between days and the
+          current date is stated in full rather than hidden in the window title. */}
+      {(onPrevDay || onNextDay) && (() => {
+        const d = new Date(record.date + "T00:00:00");
+        const weekday = ["日", "一", "二", "三", "四", "五", "六"][d.getDay()];
+        return (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+            marginBottom: 16, padding: "10px 8px", borderRadius: 14, background: COLORS.accentSoft,
+          }}>
+            <button onClick={onPrevDay || undefined} disabled={!onPrevDay} aria-label="前一天" style={{
+              width: 40, height: 40, borderRadius: 20, flexShrink: 0, border: "none",
+              background: onPrevDay ? "#fff" : "transparent",
+              color: onPrevDay ? COLORS.accent : COLORS.line,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: onPrevDay ? "pointer" : "default",
+              boxShadow: onPrevDay ? "0 1px 4px rgba(38,51,46,0.12)" : "none",
+            }}><ChevronLeft size={22} /></button>
 
-          <div style={{ fontSize: 11, color: COLORS.inkSoft, textAlign: "center" }}>
-            {prevDate ? prevDate.slice(5).replace("-", "/") : "—"}
-            <span style={{ margin: "0 6px", color: COLORS.line }}>·</span>
-            {nextDate ? nextDate.slice(5).replace("-", "/") : "—"}
+            <div style={{ textAlign: "center", lineHeight: 1.25 }}>
+              <div style={{ fontSize: 19, fontWeight: 800, color: COLORS.ink }}>
+                {d.getMonth() + 1} 月 {d.getDate()} 日
+              </div>
+              <div style={{ fontSize: 11, color: COLORS.inkSoft }}>{d.getFullYear()} 年・星期{weekday}</div>
+            </div>
+
+            <button onClick={onNextDay || undefined} disabled={!onNextDay} aria-label="後一天" style={{
+              width: 40, height: 40, borderRadius: 20, flexShrink: 0, border: "none",
+              background: onNextDay ? "#fff" : "transparent",
+              color: onNextDay ? COLORS.accent : COLORS.line,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: onNextDay ? "pointer" : "default",
+              boxShadow: onNextDay ? "0 1px 4px rgba(38,51,46,0.12)" : "none",
+            }}><ChevronRight size={22} /></button>
           </div>
-
-          <button onClick={onNextDay || undefined} disabled={!onNextDay} aria-label="後一天" style={{
-            width: 42, height: 42, borderRadius: 21, flexShrink: 0,
-            border: `1px solid ${onNextDay ? COLORS.accent : COLORS.line}`,
-            background: onNextDay ? COLORS.accentSoft : "#fff",
-            color: onNextDay ? COLORS.accent : COLORS.line,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: onNextDay ? "pointer" : "default",
-          }}><ChevronRight size={22} /></button>
-        </div>
-      )}
+        );
+      })()}
 
       <DayDetail record={record} product={product} />
       {role === "owner" && (
@@ -1266,6 +1280,8 @@ function CalendarView({ records, products, onSelect, monthOffset, onShiftMonth }
     return m;
   }, [records]);
 
+  const prodOf = (r) => products.find((p) => p.id === r.productId);
+
   const base = new Date();
   base.setDate(1);
   base.setMonth(base.getMonth() + monthOffset);
@@ -1329,8 +1345,10 @@ function CalendarView({ records, products, onSelect, monthOffset, onShiftMonth }
               disabled={!r}
               style={{
                 aspectRatio: "1 / 1", borderRadius: 12, padding: 2,
-                border: `1.5px solid ${flagged ? COLORS.danger : r ? COLORS.accentSoft : "transparent"}`,
-                background: flagged ? COLORS.dangerSoft : r ? "#fff" : "transparent",
+                // Tile tint = which food that day; red outline = abnormal. The two are separate
+                // channels so you can see feed changes and problem days at the same time.
+                border: `1.5px solid ${flagged ? COLORS.danger : r ? swatch(prodOf(r)?.color).border + "66" : "transparent"}`,
+                background: flagged ? COLORS.dangerSoft : r ? swatch(prodOf(r)?.color).bg : "transparent",
                 cursor: r ? "pointer" : "default",
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1,
               }}
@@ -1349,7 +1367,31 @@ function CalendarView({ records, products, onSelect, monthOffset, onShiftMonth }
         })}
       </div>
 
-      <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 12, fontSize: 11, color: COLORS.inkSoft, flexWrap: "wrap" }}>
+      {/* Which foods appear this month, in the same colours as the tiles */}
+      {(() => {
+        const used = [];
+        monthRecords.forEach((r) => {
+          const pr = prodOf(r);
+          if (pr && !used.some((u) => u.id === pr.id)) used.push(pr);
+        });
+        if (used.length === 0) return null;
+        return (
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
+            {used.map((pr) => (
+              <span key={pr.id} style={{
+                display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: COLORS.ink,
+                background: swatch(pr.color).bg, border: `1px solid ${swatch(pr.color).border}`,
+                borderRadius: 999, padding: "4px 10px",
+              }}>
+                <span style={{ width: 7, height: 7, borderRadius: 4, background: swatch(pr.color).border }} />
+                {pr.name}
+              </span>
+            ))}
+          </div>
+        );
+      })()}
+
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 10, fontSize: 11, color: COLORS.inkSoft, flexWrap: "wrap" }}>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.accent }} />正常
         </span>
@@ -2320,7 +2362,7 @@ function App() {
         const idx = ordered.findIndex((r) => r.id === modal.payload.id);
         const goTo = (i) => { if (ordered[i]) setModal({ type: "dayPanel", payload: ordered[i] }); };
         return (
-          <Modal title={`${modal.payload.date} 紀錄`} onClose={() => setModal(null)}>
+          <Modal title="飲食日記" onClose={() => setModal(null)}>
             <DayPanelBody
               key={modal.payload.date}
               record={modal.payload}
