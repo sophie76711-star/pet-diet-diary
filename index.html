@@ -674,21 +674,25 @@ function DayPanelBody({ record, product, role, products, existingDates, onSave, 
 
   return (
     <div {...swipeHandlers}>
-      {(onPrevDay || onNextDay) && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
-          <button onClick={onPrevDay || undefined} disabled={!onPrevDay} style={{
-            display: "flex", alignItems: "center", gap: 2, background: "none", border: "none",
-            cursor: onPrevDay ? "pointer" : "default", color: onPrevDay ? COLORS.accent : COLORS.line,
-            fontSize: 12, fontWeight: 600, padding: 0,
-          }}><ChevronLeft size={15} />{prevDate ? prevDate.slice(5) : "前一天"}</button>
-          <span style={{ fontSize: 11, color: COLORS.inkSoft }}>左右滑動可換日期</span>
-          <button onClick={onNextDay || undefined} disabled={!onNextDay} style={{
-            display: "flex", alignItems: "center", gap: 2, background: "none", border: "none",
-            cursor: onNextDay ? "pointer" : "default", color: onNextDay ? COLORS.accent : COLORS.line,
-            fontSize: 12, fontWeight: 600, padding: 0,
-          }}>{nextDate ? nextDate.slice(5) : "後一天"}<ChevronRight size={15} /></button>
-        </div>
+      {/* Floating arrows pinned to the left/right edges — the obvious place to look for
+          "previous / next", and they stay put while the page scrolls. */}
+      {onPrevDay && (
+        <button onClick={onPrevDay} aria-label={`前一天 ${prevDate || ""}`} style={{
+          position: "fixed", left: 6, top: "50%", transform: "translateY(-50%)", zIndex: 5,
+          width: 44, height: 44, borderRadius: 22, border: `1px solid ${COLORS.line}`,
+          background: "rgba(255,255,255,0.94)", boxShadow: "0 2px 10px rgba(38,51,46,0.14)",
+          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: COLORS.accent,
+        }}><ChevronLeft size={24} /></button>
       )}
+      {onNextDay && (
+        <button onClick={onNextDay} aria-label={`後一天 ${nextDate || ""}`} style={{
+          position: "fixed", right: 6, top: "50%", transform: "translateY(-50%)", zIndex: 5,
+          width: 44, height: 44, borderRadius: 22, border: `1px solid ${COLORS.line}`,
+          background: "rgba(255,255,255,0.94)", boxShadow: "0 2px 10px rgba(38,51,46,0.14)",
+          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: COLORS.accent,
+        }}><ChevronRight size={24} /></button>
+      )}
+
       <DayDetail record={record} product={product} />
       {role === "owner" && (
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
@@ -1645,7 +1649,7 @@ function buildSampleData() {
 function LandingScreen({ onEnter, pinSet }) {
   const cardStyle = {
     flex: "1 1 220px", background: "#fff", border: `1.5px solid ${COLORS.line}`, borderRadius: 20,
-    padding: "32px 22px", cursor: "pointer", textAlign: "center", display: "flex",
+    padding: "26px 22px", cursor: "pointer", textAlign: "center", display: "flex",
     flexDirection: "column", alignItems: "center", gap: 10, transition: "transform .12s, box-shadow .12s",
     position: "relative",
   };
@@ -1678,7 +1682,6 @@ function LandingScreen({ onEnter, pinSet }) {
             <User size={26} color={COLORS.accent} />
           </div>
           <div style={{ fontWeight: 700, fontSize: 16, color: COLORS.ink }}>主人模式</div>
-          <div style={{ fontSize: 12, color: COLORS.inkSoft, lineHeight: 1.5 }}>新增／修改紀錄、管理產品、查看圖表、匯出 Excel</div>
         </button>
         <button
           style={cardStyle}
@@ -1690,7 +1693,6 @@ function LandingScreen({ onEnter, pinSet }) {
             <Stethoscope size={26} color={COLORS.blue} />
           </div>
           <div style={{ fontWeight: 700, fontSize: 16, color: COLORS.ink }}>醫師模式</div>
-          <div style={{ fontSize: 12, color: COLORS.inkSoft, lineHeight: 1.5 }}>唯讀查看最新紀錄與圖表，無法新增或修改</div>
         </button>
       </div>
       <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 26, textAlign: "center", maxWidth: 380 }}>
