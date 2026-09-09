@@ -1193,6 +1193,74 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
   );
 }
 
+// ---------- Per-product problem summary ----------
+// A table beats a chart here: the question is "on this food, how often did problems happen?",
+// which is a count per feed, not a shape over time.
+function ProductIssueSummary({ records, products }) {
+  const rows = products
+    .map((p) => {
+      const rs = records.filter((r) => r.productId === p.id);
+      if (rs.length === 0) return null;
+      const days = rs.length;
+      const vomitDays = rs.filter((r) => r.vomit > 0).length;
+      const vomitTimes = rs.reduce((sum, r) => sum + r.vomit, 0);
+      const loose = rs.filter((r) => r.stool >= 6).length;
+      const hard = rs.filter((r) => r.stool <= 2).length;
+      const lowMood = rs.filter((r) => r.mental <= 2).length;
+      const avg = Math.round(rs.reduce((sum, r) => sum + r.breakfast + r.dinner + r.bedtime, 0) / days);
+      const dates = rs.map((r) => r.date).sort();
+      return { p, days, vomitDays, vomitTimes, loose, hard, lowMood, avg, start: dates[0], end: dates[dates.length - 1] };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.end.localeCompare(a.end));
+
+  if (rows.length === 0) return null;
+
+  const Stat = ({ label, value, bad }) => (
+    <div style={{ flex: 1, minWidth: 68, textAlign: "center" }}>
+      <div style={{ fontSize: 17, fontWeight: 800, color: bad ? COLORS.danger : COLORS.ink }}>{value}</div>
+      <div style={{ fontSize: 10, color: COLORS.inkSoft, marginTop: 1 }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <Card>
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: COLORS.ink, display: "flex", alignItems: "center", gap: 6 }}>
+        <BellIcon size={15} color={COLORS.danger} />各飼料的狀況統計
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {rows.map((row) => {
+          const c = swatch(row.p.color);
+          const rate = row.vomitDays > 0 ? Math.round(row.days / row.vomitDays) : null;
+          return (
+            <div key={row.p.id} style={{ border: `1.5px solid ${c.border}`, borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ background: c.bg, padding: "8px 12px" }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: COLORS.ink }}>{row.p.name}</div>
+                <div style={{ fontSize: 11, color: COLORS.inkSoft }}>
+                  {row.start} ～ {row.end}・{row.days} 天・平均 {row.avg}g
+                  {row.p.dailyTarget ? `／建議 ${row.p.dailyTarget}g` : ""}
+                </div>
+              </div>
+              <div style={{ display: "flex", padding: "10px 8px", gap: 4, flexWrap: "wrap" }}>
+                <Stat label="嘔吐天數" value={row.vomitDays} bad={row.vomitDays > 0} />
+                <Stat label="嘔吐次數" value={row.vomitTimes} bad={row.vomitTimes > 0} />
+                <Stat label="軟便/腹瀉" value={row.loose} bad={row.loose > 0} />
+                <Stat label="便秘偏硬" value={row.hard} bad={row.hard > 0} />
+                <Stat label="精神低落" value={row.lowMood} bad={row.lowMood > 0} />
+              </div>
+              <div style={{ padding: "0 12px 10px", fontSize: 11, color: COLORS.inkSoft, lineHeight: 1.6 }}>
+                {row.vomitDays === 0
+                  ? "這段期間沒有嘔吐紀錄"
+                  : `平均約每 ${rate} 天吐一次`}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 // ---------- Dashboard ----------
 function Dashboard({ records, products, role, existingDates, onSaveRecord, onDeleteRecord, onOpenInHistory, onQuickAddProduct }) {
   const [expanded, setExpanded] = useState(null); // { metric, date } | null
@@ -1261,7 +1329,7 @@ function Dashboard({ records, products, role, existingDates, onSaveRecord, onDel
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {renderChartCard("health", previewData, previewDomain, 200)}
-      {renderChartCard("events", chartData, domain, 140)}
+      <ProductIssueSummary records={records} products={products} />
       {renderChartCard("total", chartData, domain)}
       {renderChartCard("mental", chartData, domain)}
       {renderChartCard("stool", chartData, domain)}
@@ -2412,24 +2480,23 @@ function App() {
       `}</style>
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "16px 16px 40px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 60px)" }}>
-        {/* Nav row: back to role selection on the left; pet switch + PIN on the right */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22, gap: 8 }}>
-          <button onClick={() => { setScreen("landing"); setTab(null); }} style={{
-            display: "flex", alignItems: "center", gap: 3, background: "none", border: "none", padding: "4px 0",
-            cursor: "pointer", color: COLORS.accent, fontSize: 13, fontWeight: 600,
-          }}><ChevronLeft size={16} />切換主人／醫師</button>
-          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-            <button onClick={() => { setScreen("pets"); setTab(null); }} title="切換記錄對象" style={{
+        {/* Settings-style buttons, all grouped on the right. "返回" (below) is the only
+            left-aligned back control, so the two are no longer easy to mix up. */}
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 18, gap: 6 }}>
+          <button onClick={() => { setScreen("pets"); setTab(null); }} title="切換記錄對象" style={{
+            display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
+            borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
+          }}><PawIcon size={13} color={COLORS.inkSoft} />切換對象</button>
+          <button onClick={() => { setScreen("landing"); setTab(null); }} title="切換主人／醫師模式" style={{
+            display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
+            borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
+          }}>{role === "owner" ? <User size={13} /> : <Stethoscope size={13} />}切換模式</button>
+          {role === "owner" && (
+            <button onClick={() => setPinSettingsOpen(true)} title="PIN 保護設定" style={{
               display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
               borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
-            }}><PawIcon size={13} color={COLORS.inkSoft} />切換對象</button>
-            {role === "owner" && (
-              <button onClick={() => setPinSettingsOpen(true)} title="PIN 保護設定" style={{
-                display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
-                borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
-              }}><LockIcon size={14} color={ownerPin ? COLORS.accent : COLORS.inkSoft} /></button>
-            )}
-          </div>
+            }}><LockIcon size={14} color={ownerPin ? COLORS.accent : COLORS.inkSoft} /></button>
+          )}
         </div>
 
         <div style={{ marginBottom: 6 }}>
