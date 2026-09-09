@@ -1250,9 +1250,9 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
           <div style={{ color: COLORS.inkSoft, fontSize: 13, textAlign: "center" }}>還沒有任何紀錄。點上方「新增紀錄」開始記錄。</div>
           {onLoadSample && (
             <>
-              <Btn size="sm" variant="secondary" onClick={onLoadSample}>載入範例資料看看效果</Btn>
+              <Btn size="sm" variant="secondary" onClick={onLoadSample}>匯入 8/16–9/9 既有紀錄</Btn>
               <div style={{ fontSize: 11, color: COLORS.inkSoft, textAlign: "center", maxWidth: 280 }}>
-                範例只用來預覽，之後可以用「刪除部分資料」→「全選目前列表」一次清掉。
+                會匯入 25 天的紀錄與 GI32／GIDR 兩個產品。之後可用「刪除」→「全選目前列表」清掉。
               </div>
             </>
           )}
@@ -1473,48 +1473,50 @@ function ExportPanel({ records, products, petName }) {
   );
 }
 
-// ---------- Sample data (preview only; shown only when the diary is empty) ----------
+// ---------- One-off import of Silvia's existing sheet (8/16 – 9/9) ----------
 function buildSampleData() {
-  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
-  const today = new Date(todayStr() + "T00:00:00");
-  const days = 26;
-  const start = addDays(today, -(days - 1));
-  const switchDate = addDays(today, -(days - 15)); // switch foods on day 15
-  const p1 = { id: "sample-p1", name: "GI32", startDate: start, endDate: addDays(today, -(days - 14)), color: "teal" };
-  const p2 = { id: "sample-p2", name: "新處方飼料", startDate: switchDate, endDate: null, color: "gold" };
+  const p1 = { id: "prod-gi32", name: "GI32", startDate: "2026-08-16", endDate: "2026-08-30", color: "teal" };
+  const p2 = { id: "prod-gidr", name: "GIDR", startDate: "2026-08-31", endDate: null, color: "gold" };
   const products = [p1, p2];
 
-  const records = [];
-  for (let i = 0; i < days; i++) {
-    const date = addDays(today, -(days - 1) + i);
-    const onNewFood = date >= switchDate;
-    const daysSinceSwitch = onNewFood ? i - 14 : -1;
+  // [date, breakfast, dinner, bedtime, mental, stool, vomit, other, stress]
+  // Blank grams in the sheet are recorded as 0; blank mental score defaults to 4.
+  const raw = [
+    ["2026-08-16", 0, 0, 0, 4, 3, 1, "吃gi32，吐，飲食無紀錄", ""],
+    ["2026-08-17", 5, 8, 13, 4, 3, 0, "觀察監視器，有在碗附近走動，吃幾口就離開，21:50摸摸他有像想吐的樣子", ""],
+    ["2026-08-18", 14, 0, 20, 4, 3, 0, "飲食記錄不完全", ""],
+    ["2026-08-19", 10, 20, 14, 4, 3, 0, "", ""],
+    ["2026-08-20", 18, 12, 13, 4, 3, 0, "", ""],
+    ["2026-08-21", 15, 20, 16, 4, 3, 0, "食慾突然好", ""],
+    ["2026-08-22", 14, 20, 0, 4, 3, 0, "發現吃藥使用的ciao不純雞肉，今天換純雞肉泥品牌，飲食記錄不完全", ""],
+    ["2026-08-23", 17, 11, 20, 4, 3, 0, "", ""],
+    ["2026-08-24", 16, 7, 12, 4, 3, 0, "", ""],
+    ["2026-08-25", 20, 10, 14, 4, 3, 0, "", ""],
+    ["2026-08-26", 17, 16, 2, 4, 3, 0, "對我喵喵叫，睡覺有嘔吐感，聽肚子有消化聲，不確定是否多疑了", ""],
+    ["2026-08-27", 17, 14, 9, 4, 3, 1, "早餐吐", ""],
+    ["2026-08-28", 17, 17, 20, 4, 3, 0, "", ""],
+    ["2026-08-29", 17, 10, 10, 4, 3, 0, "發現可能偷吃培根，不確定，大便不舒服一直叫，但大便是正常的", ""],
+    ["2026-08-30", 18, 17, 14, 4, 3, 0, "早上喊肚子餓，大便不舒服一直叫", ""],
+    ["2026-08-31", 16, 18, 20, 4, 3, 0, "晚餐換食gidr 試用包，增加新藥止吐、食慾。", "出門看醫生"],
+    ["2026-09-01", 20, 18, 12, 4, 3, 0, "一放飯就過去吃了，雖然沒有馬上吃光光", ""],
+    ["2026-09-02", 19, 10, 13, 4, 3, 0, "一放飯就過去吃飯，反應比gi32好，雖然沒有馬上吃光", ""],
+    ["2026-09-03", 14, 10, 16, 4, 3, 0, "", ""],
+    ["2026-09-04", 18, 12, 16, 4, 3, 0, "發現桌上的豬腳骨頭被移動過，以前沒遇過辛巴吃人類的食物，自從小狗來家裡之後，我們不在的視線範圍，辛巴開始會偷偷到餐桌上，有一種他在確認生活資源的可能。昨天離開視線有可能被偷吃的食物有：豬腳、牛奶", ""],
+    ["2026-09-05", 20, 14, 14, 4, 3, 0, "由於懷疑吃人類食物，午餐、晚餐趁我們還沒收桌上食物的時候跑去聞，還好我都有蓋起來，抓到現行犯跟他溝通，他用嗚嗚聲回覆我，今天他心情不太美麗。", "被責備"],
+    ["2026-09-06", 8, 16, 13, 4, 3, 0, "發現偷桌上食物again（收好還是被動過）", ""],
+    ["2026-09-07", 17, 13, 13, 4, 3, 0, "我們食物都收好不讓他偷吃的空間", "可能有無法偷吃的壓力，有責備不要跳到餐桌上"],
+    ["2026-09-08", 20, 20, 7, 4, 3, 0, "改用自動餵食機餵食改睡前做總結，否則紀錄不佳，我們在清理狗圍欄下偷吃狗食（不超過5顆）根據日常飲食我們三餐分配是20,20,10。", "使用自動餵食機，被我抓到他吃狗飼料"],
+    ["2026-09-09", 0, 0, 0, 4, 3, 1, "早上吐了藥和飼料，oh my god因為偷吃的關係，沒辦法確定是什麼引起他嘔吐的", ""],
+  ];
 
-    // appetite dips right after the switch, then recovers
-    let base = 70;
-    if (onNewFood && daysSinceSwitch <= 3) base = 50 + daysSinceSwitch * 5;
-    else if (onNewFood) base = 65 + Math.min(daysSinceSwitch - 3, 8);
+  const records = raw.map(([date, b, d, bt, mental, stool, vomit, other, stress], i) => ({
+    id: `imported-${i}`,
+    date,
+    productId: date >= p2.startDate ? p2.id : p1.id,
+    breakfast: b, dinner: d, bedtime: bt,
+    mental, stool, vomit, other, stress,
+  }));
 
-    const jitter = () => Math.round((Math.random() - 0.5) * 10);
-    const breakfast = Math.max(0, Math.round(base * 0.35 + jitter()));
-    const dinner = Math.max(0, Math.round(base * 0.4 + jitter()));
-    const bedtime = Math.max(0, Math.round(base * 0.25 + jitter()));
-
-    let mental = onNewFood && daysSinceSwitch >= 0 && daysSinceSwitch <= 2 ? 2 : 4;
-    if (Math.random() < 0.15) mental = Math.max(0, mental - 1);
-
-    let stool = onNewFood && daysSinceSwitch >= 0 && daysSinceSwitch <= 3 ? 6 : 4;
-    if (Math.random() < 0.2) stool = Math.min(7, Math.max(1, stool + (Math.random() < 0.5 ? -1 : 1)));
-
-    const vomit = (onNewFood && daysSinceSwitch >= 0 && daysSinceSwitch <= 2 && Math.random() < 0.4) ? 1 : (Math.random() < 0.05 ? 1 : 0);
-    const stress = i === 5 ? "有客人來訪，比較緊張" : (i === 16 ? "打雷，躲到床底下" : "");
-    const other = i === 20 ? "今天特別黏人" : "";
-
-    records.push({
-      id: `sample-r-${i}`, date, productId: onNewFood ? p2.id : p1.id,
-      breakfast, dinner, bedtime, mental, stool, vomit, other, stress,
-    });
-  }
   return { products, records };
 }
 
