@@ -12,89 +12,16 @@
   #boot { font-family: -apple-system, system-ui, sans-serif; color: #66766E; text-align: center; padding: 60px 20px; font-size: 14px; }
 </style>
 
-<script>
-  // Surface any load/compile/runtime failure on screen instead of a silent "載入中…"
-  function showErr(msg) {
-    var b = document.getElementById("boot");
-    if (!b) return;
-    b.innerHTML = '<div style="color:#B1503A;text-align:left;white-space:pre-wrap;font-size:13px;line-height:1.5">載入失敗，請把這段截圖給 Claude：\n\n' + msg + '</div>';
-  }
-  window.addEventListener("error", function (e) {
-    var where = e.filename ? " @ " + e.filename.split("/").pop() + ":" + e.lineno : "";
-    showErr((e.message || String(e)) + where);
-  });
-  window.addEventListener("unhandledrejection", function (e) {
-    var r = e.reason; showErr("Promise: " + (r && (r.message || r.code || r) || r));
-  });
-</script>
-
-<!-- Libraries (public CDNs; nothing to install) -->
-<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
-
 <!-- Firebase (compat build works without a bundler) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-
-<script>
-  // Verify every library actually arrived before the app tries to use it
-  (function () {
-    var missing = [];
-    if (!window.React) missing.push("React");
-    if (!window.ReactDOM) missing.push("ReactDOM");
-    if (!window.Recharts) missing.push("Recharts");
-    if (!window.d3) missing.push("d3");
-    if (!window.XLSX) missing.push("XLSX");
-    if (!window.Babel) missing.push("Babel");
-    if (!window.firebase) missing.push("firebase");
-    if (missing.length) showErr("有套件沒載入成功：" + missing.join(", ") + "\n（請確認網路正常後重新整理）");
-  })();
-
-  // ---- Firebase project config (web API keys are public by design; access is controlled by Firestore rules) ----
-  const firebaseConfig = {
-    apiKey: "AIzaSyBr4OtGSYf8acst231oLk00JrzqmqxhXEM",
-    authDomain: "pet-diet-diary.firebaseapp.com",
-    projectId: "pet-diet-diary",
-    storageBucket: "pet-diet-diary.firebasestorage.app",
-    messagingSenderId: "722876242383",
-    appId: "1:722876242383:web:22ed30f8bbc58e0a781aba"
-  };
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.firestore();
-  const kv = db.collection("kv");
-
-  // The app was written against a tiny key-value API (get/set/delete). This shim provides the
-  // same API on top of Firestore: one document per key in the "kv" collection.
-  window.storage = {
-    async get(key) {
-      const snap = await kv.doc(key).get();
-      if (!snap.exists) throw new Error("key not found: " + key);
-      return { key, value: snap.data().value, shared: true };
-    },
-    async set(key, value) {
-      await kv.doc(key).set({ value: String(value), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
-      return { key, value, shared: true };
-    },
-    async delete(key) {
-      await kv.doc(key).delete();
-      return { key, deleted: true, shared: true };
-    },
-    async list(prefix) {
-      const snap = await kv.get();
-      const keys = snap.docs.map((d) => d.id).filter((k) => !prefix || k.startsWith(prefix));
-      return { keys, prefix, shared: true };
-    },
-  };
-</script>
 </head>
 <body>
 <div id="root"><div id="boot">載入中…</div></div>
 
-<script type="text/babel" data-presets="react">
+<!-- App source (JSX). Kept as plain text; compiled and run by the loader below once every library is ready. -->
+<script type="text/plain" id="app-src">
+
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 const { ComposedChart, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceArea, ResponsiveContainer, Scatter } = Recharts;
 
@@ -2140,6 +2067,113 @@ function App() {
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 
+
+</script>
+
+<script>
+(function () {
+  function showErr(msg) {
+    var b = document.getElementById("boot");
+    if (!b) return;
+    b.innerHTML = '<div style="color:#B1503A;text-align:left;white-space:pre-wrap;font-size:13px;line-height:1.5">載入失敗，請把這段截圖給 Claude：\n\n' + msg + '</div>';
+  }
+  window.addEventListener("error", function (e) {
+    var where = e.filename ? " @ " + e.filename.split("/").pop() + ":" + e.lineno : "";
+    showErr((e.message || String(e)) + where);
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e.reason; showErr("Promise: " + (r && (r.message || r.code || r) || r));
+  });
+
+  // Load a script, trying each CDN in turn until the expected global appears
+  function load(name, urls, check) {
+    return new Promise(function (resolve, reject) {
+      var i = 0;
+      function tryNext() {
+        if (check()) return resolve();
+        if (i >= urls.length) return reject(new Error("套件載入失敗：" + name + "（所有 CDN 都連不上）"));
+        var s = document.createElement("script");
+        s.src = urls[i++];
+        s.crossOrigin = "anonymous";
+        s.onload = function () { check() ? resolve() : tryNext(); };
+        s.onerror = tryNext;
+        document.head.appendChild(s);
+      }
+      tryNext();
+    });
+  }
+
+  // ---- Firebase project config (web API keys are public by design; access is controlled by Firestore rules) ----
+  var firebaseConfig = {
+    apiKey: "AIzaSyBr4OtGSYf8acst231oLk00JrzqmqxhXEM",
+    authDomain: "pet-diet-diary.firebaseapp.com",
+    projectId: "pet-diet-diary",
+    storageBucket: "pet-diet-diary.firebasestorage.app",
+    messagingSenderId: "722876242383",
+    appId: "1:722876242383:web:22ed30f8bbc58e0a781aba"
+  };
+
+  (async function boot() {
+    try {
+      if (!window.firebase) throw new Error("Firebase SDK 沒載入");
+      firebase.initializeApp(firebaseConfig);
+      var kv = firebase.firestore().collection("kv");
+      // The app was written against a tiny key-value API; this provides it on top of Firestore
+      window.storage = {
+        get: async function (key) {
+          var snap = await kv.doc(key).get();
+          if (!snap.exists) throw new Error("key not found: " + key);
+          return { key: key, value: snap.data().value, shared: true };
+        },
+        set: async function (key, value) {
+          await kv.doc(key).set({ value: String(value), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+          return { key: key, value: value, shared: true };
+        },
+        delete: async function (key) { await kv.doc(key).delete(); return { key: key, deleted: true, shared: true }; },
+        list: async function (prefix) {
+          var snap = await kv.get();
+          return { keys: snap.docs.map(function (d) { return d.id; }).filter(function (k) { return !prefix || k.indexOf(prefix) === 0; }), prefix: prefix, shared: true };
+        }
+      };
+
+      await load("React", [
+        "https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js",
+        "https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+      ], function () { return !!window.React; });
+      await load("ReactDOM", [
+        "https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js",
+        "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+      ], function () { return !!window.ReactDOM; });
+      await load("PropTypes", [
+        "https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js",
+        "https://unpkg.com/prop-types@15.8.1/prop-types.min.js"
+      ], function () { return !!window.PropTypes; });
+      await load("Recharts", [
+        "https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js",
+        "https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js",
+        "https://unpkg.com/recharts@2.12.7/umd/Recharts.js"
+      ], function () { return !!window.Recharts; });
+      await load("d3", [
+        "https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js",
+        "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
+      ], function () { return !!window.d3; });
+      await load("XLSX", [
+        "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+        "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"
+      ], function () { return !!window.XLSX; });
+      await load("Babel", [
+        "https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js",
+        "https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"
+      ], function () { return !!window.Babel; });
+
+      var src = document.getElementById("app-src").textContent;
+      var out = Babel.transform(src, { presets: ["react"], filename: "app.jsx" }).code;
+      (new Function(out))();
+    } catch (e) {
+      showErr((e && (e.message || e.code)) || String(e));
+    }
+  })();
+})();
 </script>
 </body>
 </html>
