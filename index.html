@@ -1,0 +1,2096 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#FAFAF8" />
+<title>排除飲食日記</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #FAFAF8; }
+  #root { min-height: 100vh; }
+  #boot { font-family: -apple-system, system-ui, sans-serif; color: #66766E; text-align: center; padding: 60px 20px; font-size: 14px; }
+</style>
+
+<!-- Libraries (all from public CDNs; nothing to install) -->
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/lucide-react@0.383.0/dist/umd/lucide-react.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+<!-- Firebase (compat build works without a bundler) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<script>
+  // ---- Firebase project config (web API keys are public by design; access is controlled by Firestore rules) ----
+  const firebaseConfig = {
+    apiKey: "AIzaSyBr4OtGSYf8acst231oLk00JrzqmqxhXEM",
+    authDomain: "pet-diet-diary.firebaseapp.com",
+    projectId: "pet-diet-diary",
+    storageBucket: "pet-diet-diary.firebasestorage.app",
+    messagingSenderId: "722876242383",
+    appId: "1:722876242383:web:22ed30f8bbc58e0a781aba"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+  const kv = db.collection("kv");
+
+  // The app was written against a tiny key-value API (get/set/delete). This shim provides the
+  // same API on top of Firestore: one document per key in the "kv" collection.
+  window.storage = {
+    async get(key) {
+      const snap = await kv.doc(key).get();
+      if (!snap.exists) throw new Error("key not found: " + key);
+      return { key, value: snap.data().value, shared: true };
+    },
+    async set(key, value) {
+      await kv.doc(key).set({ value: String(value), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+      return { key, value, shared: true };
+    },
+    async delete(key) {
+      await kv.doc(key).delete();
+      return { key, deleted: true, shared: true };
+    },
+    async list(prefix) {
+      const snap = await kv.get();
+      const keys = snap.docs.map((d) => d.id).filter((k) => !prefix || k.startsWith(prefix));
+      return { keys, prefix, shared: true };
+    },
+  };
+</script>
+</head>
+<body>
+<div id="root"><div id="boot">載入中…</div></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
+const { ComposedChart, LineChart, Line, XAxis, YAxis, CartesianGrid, ReferenceArea, ResponsiveContainer, Scatter } = Recharts;
+const LR = window.LucideReact || window["lucide-react"];
+const { Plus, Pencil, Trash2, Download, X, Stethoscope, User, Search,
+  ChevronLeft, ChevronRight, ChevronDown, AlertCircle, Check, Home, Maximize2, ZoomIn, ZoomOut, MessageSquare } = LR;
+
+// ---------- theme ----------
+const COLORS = {
+  bg: "#FAFAF8",
+  ink: "#26332E",
+  inkSoft: "#66766E",
+  line: "#E7E4DC",
+  card: "#FFFFFF",
+  accent: "#3E6259",
+  accentSoft: "#DCE9E3",
+  danger: "#B1503A",
+  dangerSoft: "#F3E1DC",
+  gold: "#C9A227",
+  blue: "#4C7A9E",
+  blueSoft: "#DEE8EF",
+  shadow: "0 2px 10px rgba(38,51,46,0.06)",
+};
+
+// Subtle repeating paw-print watermark (no emoji) — very low opacity so it reads as texture, not clutter
+const PAW_PATTERN_URL =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='%233E6259' fill-opacity='0.045' transform='rotate(-18 60 60)'%3E%3Cellipse cx='60' cy='78' rx='19' ry='15'/%3E%3Cellipse cx='34' cy='46' rx='8.5' ry='11.5'/%3E%3Cellipse cx='50' cy='28' rx='8.5' ry='11.5'/%3E%3Cellipse cx='70' cy='28' rx='8.5' ry='11.5'/%3E%3Cellipse cx='86' cy='46' rx='8.5' ry='11.5'/%3E%3C/g%3E%3C/svg%3E";
+
+function PawIcon({ size = 20, color = COLORS.accent, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} style={style}>
+      <ellipse cx="12" cy="15.8" rx="6.2" ry="5" />
+      <ellipse cx="4.8" cy="9.3" rx="2.3" ry="3" />
+      <ellipse cx="9.8" cy="5.4" rx="2.3" ry="3" />
+      <ellipse cx="14.2" cy="5.4" rx="2.3" ry="3" />
+      <ellipse cx="19.2" cy="9.3" rx="2.3" ry="3" />
+    </svg>
+  );
+}
+
+// Small hand-drawn line-icon family (loose, single-stroke feel) — used as visual anchors
+// next to tab labels and card titles so sections are easier to scan. No emoji.
+const handDrawnProps = { fill: "none", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" };
+function BowlIcon({ size = 18, color = COLORS.accent, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" stroke={color} style={style} {...handDrawnProps}>
+      <path d="M3.4 11.6c-.2 4 3.7 7 8.6 7s8.8-3 8.6-7" />
+      <path d="M3.2 11.5c5.8.6 11.9.6 17.6 0" />
+      <path d="M8.2 11c-.4-1.9.7-3.5 2.6-3.7" />
+    </svg>
+  );
+}
+function JournalIcon({ size = 18, color = COLORS.accent, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" stroke={color} style={style} {...handDrawnProps}>
+      <path d="M4.8 4.6c3.9-1.3 6.9-1.3 7.2.1v14.7c-.3-1.3-3.3-1.3-7.2 0z" />
+      <path d="M19.2 4.6c-3.9-1.3-6.9-1.3-7.2.1v14.7c.3-1.3 3.3-1.3 7.2 0z" />
+    </svg>
+  );
+}
+function LeafIcon({ size = 18, color = COLORS.accent, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" stroke={color} style={style} {...handDrawnProps}>
+      <path d="M5.2 18.8c-2.2-6.8 1.8-13.6 13.6-13.6.9 8-4.3 13.6-13.6 13.6z" />
+      <path d="M6.3 17.7c2.9-3.9 5.9-7 11.6-10.7" />
+    </svg>
+  );
+}
+function HeartIcon({ size = 18, color = COLORS.accent, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" stroke={color} style={style} {...handDrawnProps}>
+      <path d="M12 20c-5-3.4-9-7-9-11 0-3 2.3-5 5-5 2 0 3.3 1 4 2.3.7-1.4 2-2.3 4-2.3 2.7 0 5 2 5 5 0 4-4 7.6-9 11z" />
+    </svg>
+  );
+}
+function BellIcon({ size = 18, color = COLORS.danger, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" stroke={color} style={style} {...handDrawnProps}>
+      <path d="M6 16.2c0-1 .5-1.5 1-2.1.8-1 1-2.5 1-4.4C8 6.2 9.8 4.2 12 4.2s4 2 4 5.5c0 1.9.2 3.4 1 4.4.5.6 1 1.1 1 2.1z" />
+      <path d="M10 18.6c.5 1 1.2 1.5 2 1.5s1.5-.5 2-1.5" />
+    </svg>
+  );
+}
+function LockIcon({ size = 18, color = COLORS.accent, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" stroke={color} style={style} {...handDrawnProps}>
+      <path d="M6.3 11.2c3.8-.6 7.6-.6 11.4 0 .4 3 .4 5.9 0 8.7-3.8.7-7.6.7-11.4 0-.4-2.8-.4-5.7 0-8.7z" />
+      <path d="M8.6 11c-.5-3.4.9-6 3.4-6s3.9 2.6 3.4 6" />
+    </svg>
+  );
+}
+
+const PALETTE = [
+  { key: "teal", bg: "#DCEEEA", border: "#5B9C8F" },
+  { key: "gold", bg: "#F6E8BE", border: "#C9A227" },
+  { key: "rose", bg: "#F3DEE0", border: "#C97C86" },
+  { key: "lavender", bg: "#E4E0F2", border: "#8D7FBE" },
+  { key: "mint", bg: "#DFF0DE", border: "#6FA36A" },
+  { key: "peach", bg: "#F5E2D0", border: "#D89A5D" },
+];
+
+const swatch = (key) => PALETTE.find((p) => p.key === key) || PALETTE[0];
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const uid = () => Math.random().toString(36).slice(2, 10);
+const fmtMD = (ts) => {
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+};
+const toTs = (dateStr) => new Date(dateStr + "T00:00:00").getTime();
+const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+
+// ---------- storage ----------
+// Records and products are namespaced per pet; the old un-namespaced keys are migrated once.
+const KEY_PETS = "cat-diet-pets";
+const KEY_PRODUCTS = "cat-diet-products";
+const KEY_RECORDS = "cat-diet-records";
+const KEY_PIN = "cat-diet-owner-pin";
+const productsKey = (petId) => `${KEY_PRODUCTS}:${petId}`;
+const recordsKey = (petId) => `${KEY_RECORDS}:${petId}`;
+
+async function loadKey(key) {
+  try {
+    const res = await window.storage.get(key, true);
+    return res ? JSON.parse(res.value) : [];
+  } catch (e) {
+    return [];
+  }
+}
+async function saveKey(key, data) {
+  try {
+    await window.storage.set(key, JSON.stringify(data), true);
+    return true;
+  } catch (e) {
+    console.error("storage save failed", e);
+    return false;
+  }
+}
+async function loadPin() {
+  try {
+    const res = await window.storage.get(KEY_PIN, true);
+    return res ? res.value : "";
+  } catch (e) {
+    return "";
+  }
+}
+async function savePin(pin) {
+  try { await window.storage.set(KEY_PIN, pin, true); return true; } catch (e) { return false; }
+}
+async function clearPin() {
+  try { await window.storage.delete(KEY_PIN, true); return true; } catch (e) { return false; }
+}
+
+// Loads the pet list, creating a default pet (and moving any pre-multi-pet data into it) on first run
+async function loadPetsWithMigration() {
+  let pets = await loadKey(KEY_PETS);
+  if (Array.isArray(pets) && pets.length > 0) return pets;
+
+  const legacyProducts = await loadKey(KEY_PRODUCTS);
+  const legacyRecords = await loadKey(KEY_RECORDS);
+  const pet = { id: "pet-1", name: "辛巴" };
+  pets = [pet];
+  await saveKey(KEY_PETS, pets);
+  if (legacyProducts.length || legacyRecords.length) {
+    await saveKey(productsKey(pet.id), legacyProducts);
+    await saveKey(recordsKey(pet.id), legacyRecords);
+  }
+  return pets;
+}
+
+// ---------- small UI atoms ----------
+function Btn({ children, onClick, variant = "primary", size = "md", disabled, type = "button", style }) {
+  const base = {
+    fontFamily: "'IBM Plex Sans', sans-serif",
+    fontWeight: 600,
+    borderRadius: 10,
+    border: "1px solid transparent",
+    cursor: disabled ? "not-allowed" : "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    transition: "opacity .15s, transform .1s",
+    opacity: disabled ? 0.5 : 1,
+  };
+  const sizes = { sm: { padding: "6px 12px", fontSize: 13 }, md: { padding: "10px 16px", fontSize: 14 } };
+  const variants = {
+    primary: { background: COLORS.accent, color: "#fff" },
+    secondary: { background: COLORS.accentSoft, color: COLORS.accent },
+    danger: { background: COLORS.dangerSoft, color: COLORS.danger },
+    ghost: { background: "transparent", color: COLORS.inkSoft, border: `1px solid ${COLORS.line}` },
+  };
+  return (
+    <button
+      type={type}
+      disabled={disabled}
+      onClick={onClick}
+      style={{ ...base, ...sizes[size], ...variants[variant], ...style }}
+      onMouseDown={(e) => { e.currentTarget.style.transform = "scale(0.97)"; }}
+      onMouseUp={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Card({ children, style }) {
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.line}`, borderRadius: 16, padding: 16, boxShadow: COLORS.shadow, ...style }}>
+      {children}
+    </div>
+  );
+}
+
+function ScoreButtons({ value, onChange, min, max, labels, disabled, color }) {
+  const nums = [];
+  for (let i = min; i <= max; i++) nums.push(i);
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      {nums.map((n) => {
+        const active = value === n;
+        return (
+          <button
+            key={n}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(n)}
+            title={labels && labels[n] ? labels[n] : undefined}
+            style={{
+              width: 36, height: 36, borderRadius: 9,
+              border: `1px solid ${active ? color : COLORS.line}`,
+              background: active ? color : "#fff",
+              color: active ? "#fff" : COLORS.ink,
+              fontWeight: 700, fontSize: 14, cursor: disabled ? "default" : "pointer",
+            }}
+          >
+            {n}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Field({ label, children, hint }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.inkSoft, marginBottom: 6 }}>{label}</div>
+      {children}
+      {hint && <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 4 }}>{hint}</div>}
+    </div>
+  );
+}
+
+const inputStyle = {
+  width: "100%", padding: "9px 10px", borderRadius: 9,
+  border: `1px solid ${COLORS.line}`, fontSize: 14, fontFamily: "inherit",
+  boxSizing: "border-box", background: "#fff", color: COLORS.ink,
+};
+
+// ---------- Bristol placeholder ----------
+const BRISTOL_CHART_IMAGE = "data:image/jpeg;base64,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";
+
+function BristolPlaceholder({ compact }) {
+  return (
+    <div style={{
+      border: `1px solid ${COLORS.line}`, borderRadius: 12,
+      padding: 6, background: "#fff",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      minHeight: compact ? 90 : 140, overflow: "hidden",
+    }}>
+      <img
+        src={BRISTOL_CHART_IMAGE}
+        alt="Bristol Stool Scale 對照圖：Type 1 分離硬塊，Type 2 硬香腸狀，Type 3 表面有裂痕的香腸狀，Type 4 光滑柔軟的香腸/蛇狀，Type 5 邊緣清楚的軟塊，Type 6 邊緣不規則的鬆散糊狀，Type 7 完全液狀"
+        style={{ maxWidth: "100%", maxHeight: compact ? 220 : 320, objectFit: "contain", borderRadius: 8 }}
+      />
+    </div>
+  );
+}
+
+// ---------- Record Form (used for add / edit) ----------
+function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct }) {
+  const [date, setDate] = useState(initial?.date || todayStr());
+  const [productId, setProductId] = useState(initial?.productId || (products[0]?.id ?? ""));
+  const [breakfast, setBreakfast] = useState(initial?.breakfast ?? 0);
+  const [dinner, setDinner] = useState(initial?.dinner ?? 0);
+  const [bedtime, setBedtime] = useState(initial?.bedtime ?? 0);
+  const [mental, setMental] = useState(initial?.mental ?? 3);
+  const [stool, setStool] = useState(initial?.stool ?? 4);
+  const [vomit, setVomit] = useState(initial?.vomit ?? 0);
+  const [other, setOther] = useState(initial?.other || "");
+  const [stress, setStress] = useState(initial?.stress || "");
+  const [error, setError] = useState("");
+  const [addingProduct, setAddingProduct] = useState(false);
+  const [newProductName, setNewProductName] = useState("");
+
+  const total = (Number(breakfast) || 0) + (Number(dinner) || 0) + (Number(bedtime) || 0);
+
+  const handleSave = () => {
+    if (!date) { setError("請選擇日期"); return; }
+    if (!initial && existingDates.includes(date)) {
+      setError("這一天已經有紀錄了，請改用「飲食日記」修改該筆資料。");
+      return;
+    }
+    if (!productId) { setError("請選擇當天食用的產品，或用上面的「＋ 新增產品」直接建立一個。"); return; }
+    onSave({
+      id: initial?.id || uid(),
+      date, productId,
+      breakfast: Math.max(0, Number(breakfast) || 0),
+      dinner: Math.max(0, Number(dinner) || 0),
+      bedtime: Math.max(0, Number(bedtime) || 0),
+      mental: Number(mental), stool: Number(stool), vomit: Number(vomit),
+      other, stress,
+    });
+  };
+
+  return (
+    <div>
+      {error && (
+        <div style={{
+          display: "flex", gap: 8, alignItems: "flex-start", background: COLORS.dangerSoft,
+          color: COLORS.danger, padding: "10px 12px", borderRadius: 10, fontSize: 13, marginBottom: 14,
+        }}>
+          <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>{error}</span>
+        </div>
+      )}
+      <Field label="日期">
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} disabled={!!initial} />
+      </Field>
+      <Field label="食用產品">
+        <select value={productId} onChange={(e) => {
+          if (e.target.value === "__new__") { setAddingProduct(true); }
+          else { setProductId(e.target.value); }
+        }} style={inputStyle}>
+          {products.length === 0 && <option value="">尚無產品</option>}
+          {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {onQuickAddProduct && <option value="__new__">＋ 新增產品...</option>}
+        </select>
+        {addingProduct && (
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <input value={newProductName} onChange={(e) => setNewProductName(e.target.value)} style={inputStyle} placeholder="新產品名稱，例如：GI32" autoFocus />
+            <Btn size="sm" onClick={() => {
+              if (!newProductName.trim()) return;
+              const prod = onQuickAddProduct(newProductName, date);
+              setProductId(prod.id);
+              setNewProductName("");
+              setAddingProduct(false);
+            }}>新增</Btn>
+            <Btn size="sm" variant="ghost" onClick={() => { setAddingProduct(false); setNewProductName(""); }}>取消</Btn>
+          </div>
+        )}
+      </Field>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+        <Field label="早餐 (g)"><input type="number" min="0" value={breakfast} onChange={(e) => setBreakfast(e.target.value)} style={inputStyle} /></Field>
+        <Field label="晚餐 (g)"><input type="number" min="0" value={dinner} onChange={(e) => setDinner(e.target.value)} style={inputStyle} /></Field>
+        <Field label="睡前 (g)"><input type="number" min="0" value={bedtime} onChange={(e) => setBedtime(e.target.value)} style={inputStyle} /></Field>
+      </div>
+
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        background: COLORS.accentSoft, borderRadius: 10, padding: "10px 14px", marginBottom: 14,
+      }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.accent }}>每日總量（自動計算）</span>
+        <span style={{ fontSize: 18, fontWeight: 700, color: COLORS.accent }}>{total} g</span>
+      </div>
+
+      <Field label="精神分數 (0～5)">
+        <ScoreButtons value={Number(mental)} onChange={setMental} min={0} max={5} color={COLORS.accent} />
+      </Field>
+
+      <Field label="便便分數 — Bristol Stool Scale (1～7)">
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <ScoreButtons value={Number(stool)} onChange={setStool} min={1} max={7} color={COLORS.gold} />
+          <div style={{ flex: "1 1 160px", minWidth: 140 }}><BristolPlaceholder compact /></div>
+        </div>
+      </Field>
+
+      <Field label="嘔吐次數 (0～5)">
+        <ScoreButtons value={Number(vomit)} onChange={setVomit} min={0} max={5} color={COLORS.danger} />
+      </Field>
+
+      <Field label="壓力事件"><textarea value={stress} onChange={(e) => setStress(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} placeholder="例如：搬家、有客人來訪、打雷..." /></Field>
+      <Field label="其他備註"><textarea value={other} onChange={(e) => setOther(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18, gap: 10 }}>
+        <div>
+          {initial && onDelete && (
+            <Btn variant="danger" onClick={() => onDelete(initial.id)}><Trash2 size={15} />刪除</Btn>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="ghost" onClick={onCancel}>取消</Btn>
+          <Btn onClick={handleSave}><Check size={15} />儲存</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Product Form ----------
+function ProductForm({ initial, onSave, onCancel, onDelete }) {
+  const [name, setName] = useState(initial?.name || "");
+  const [startDate, setStartDate] = useState(initial?.startDate || todayStr());
+  const [endDate, setEndDate] = useState(initial?.endDate || "");
+  const [color, setColor] = useState(initial?.color || PALETTE[0].key);
+  const [error, setError] = useState("");
+
+  const handleSave = () => {
+    if (!name.trim()) { setError("請輸入產品名稱"); return; }
+    if (!startDate) { setError("請選擇開始使用日期"); return; }
+    if (endDate && endDate < startDate) { setError("結束日期不能早於開始日期"); return; }
+    onSave({ id: initial?.id || uid(), name: name.trim(), startDate, endDate: endDate || null, color });
+  };
+
+  return (
+    <div>
+      {error && (
+        <div style={{ background: COLORS.dangerSoft, color: COLORS.danger, padding: "10px 12px", borderRadius: 10, fontSize: 13, marginBottom: 14 }}>
+          {error}
+        </div>
+      )}
+      <Field label="產品名稱"><input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} placeholder="例如：GI32" /></Field>
+      <Field label="開始使用日期"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={inputStyle} /></Field>
+      <Field label="結束使用日期" hint="可留空，表示目前仍在使用"><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={inputStyle} /></Field>
+      <Field label="圖表背景顏色">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {PALETTE.map((p) => (
+            <button key={p.key} type="button" onClick={() => setColor(p.key)}
+              style={{
+                width: 34, height: 34, borderRadius: 9, background: p.bg,
+                border: `2px solid ${color === p.key ? p.border : "transparent"}`,
+                boxShadow: color === p.key ? `0 0 0 1px ${p.border}` : "none", cursor: "pointer",
+              }} />
+          ))}
+        </div>
+      </Field>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18, gap: 10 }}>
+        <div>{initial && onDelete && <Btn variant="danger" onClick={() => onDelete(initial.id)}><Trash2 size={15} />刪除</Btn>}</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="ghost" onClick={onCancel}>取消</Btn>
+          <Btn onClick={handleSave}><Check size={15} />儲存</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Modal ----------
+function Modal({ title, onClose, children, width = 480 }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(38,51,46,0.45)", zIndex: 50,
+      display: "flex", alignItems: "flex-end", justifyContent: "center",
+    }} onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: COLORS.bg, width: "100%", maxWidth: width, maxHeight: "92vh", overflowY: "auto",
+          borderRadius: "18px 18px 0 0", padding: 20, boxShadow: "0 -6px 30px rgba(0,0,0,0.2)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontFamily: "'Source Serif 4', serif", fontSize: 19, color: COLORS.ink }}>{title}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft }}><X size={22} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Day Detail (read view, used by vet + as base for owner edit) ----------
+function DayDetail({ record, product }) {
+  const total = record.breakfast + record.dinner + record.bedtime;
+  const Row = ({ label, value }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${COLORS.line}` }}>
+      <span style={{ color: COLORS.inkSoft, fontSize: 13 }}>{label}</span>
+      <span style={{ fontWeight: 600, fontSize: 14, color: COLORS.ink }}>{value}</span>
+    </div>
+  );
+  return (
+    <div>
+      <Row label="日期" value={record.date} />
+      <Row label="食用產品" value={product?.name || "（未指定）"} />
+      <Row label="早餐" value={`${record.breakfast} g`} />
+      <Row label="晚餐" value={`${record.dinner} g`} />
+      <Row label="睡前" value={`${record.bedtime} g`} />
+      <Row label="每日總量" value={`${total} g`} />
+      <Row label="精神分數" value={`${record.mental} / 5`} />
+      <Row label="便便分數" value={`${record.stool} / 7`} />
+      <Row label="嘔吐次數" value={`${record.vomit} 次`} />
+      <Row label="壓力事件" value={record.stress || "—"} />
+      <Row label="其他備註" value={record.other || "—"} />
+      <div style={{ marginTop: 12 }}><BristolPlaceholder compact /></div>
+    </div>
+  );
+}
+
+// ---------- Day panel: view first, edit only after tapping 修改 ----------
+function DayPanelBody({ record, product, role, products, existingDates, onSave, onDelete, onOpenInHistory, onQuickAddProduct }) {
+  const [editing, setEditing] = useState(false);
+  if (!record) return null;
+
+  if (editing && role === "owner") {
+    return (
+      <RecordForm
+        key={record.date}
+        initial={record}
+        products={products}
+        existingDates={existingDates}
+        onSave={(rec) => onSave(rec)}
+        onCancel={() => setEditing(false)}
+        onDelete={(id) => onDelete && onDelete(id)}
+        onQuickAddProduct={onQuickAddProduct}
+      />
+    );
+  }
+
+  return (
+    <div>
+      <DayDetail record={record} product={product} />
+      {role === "owner" && (
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <Btn onClick={() => setEditing(true)}><Pencil size={14} />修改</Btn>
+          {onDelete && <Btn variant="danger" onClick={() => onDelete(record.id)}><Trash2 size={14} />刪除</Btn>}
+        </div>
+      )}
+      {onOpenInHistory && (
+        <button onClick={() => onOpenInHistory(record.date)} style={{
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", marginTop: 14,
+          background: "none", border: "none", borderTop: `1px solid ${COLORS.line}`, paddingTop: 12,
+          color: COLORS.accent, fontSize: 13, fontWeight: 600, cursor: "pointer",
+        }}>
+          <Search size={14} />{role === "owner" ? "在飲食日記中開啟這一筆" : "在飲食日記中查看這一筆"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------- Timeline ----------
+function Timeline({ products }) {
+  const sorted = [...products].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  if (sorted.length === 0) return <div style={{ color: COLORS.inkSoft, fontSize: 13 }}>尚未建立任何產品。</div>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {sorted.map((p) => {
+        const c = swatch(p.color);
+        return (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 12, height: 12, borderRadius: 4, background: c.bg, border: `1.5px solid ${c.border}`, flexShrink: 0 }} />
+            <div style={{ fontSize: 13, color: COLORS.ink }}>
+              <strong>{p.startDate}</strong> ～ <strong>{p.endDate || "使用中"}</strong>　{p.name}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- Trend legend ----------
+function TrendLegend({ series }) {
+  return (
+    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 10 }}>
+      {series.map((s) => (
+        <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: COLORS.inkSoft }}>
+          <span style={{ width: 10, height: 10, borderRadius: 5, background: s.color, display: "inline-block" }} />
+          {s.label}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const HEALTH_SERIES = [
+  { key: "total", color: COLORS.accent, label: "總攝食量 (g)" },
+  { key: "mental", color: COLORS.blue, label: "精神分數 (0～5)" },
+];
+const EVENT_SERIES = [
+  { key: "vomit", color: COLORS.danger, label: "嘔吐" },
+  { key: "stoolAbnormal", color: COLORS.gold, label: "便便異常（偏硬／偏軟腹瀉）" },
+];
+
+// ---------- Chart metadata: one renderer shared by every metric ----------
+const CHART_META = {
+  health: { title: "健康趨勢（食量＋精神）", short: "健康趨勢", kind: "health", legend: HEALTH_SERIES, icon: HeartIcon },
+  total: { title: "每日總攝食量 (g)", short: "總攝食量", kind: "total", icon: BowlIcon },
+  mental: { title: "精神分數 (0～5)", short: "精神分數", kind: "mental", icon: HeartIcon },
+  stool: { title: "便便分數（Bristol，3～4 為正常）", short: "便便分數", kind: "stool", icon: JournalIcon },
+  events: { title: "異常事件時間軸", short: "異常事件", kind: "events", legend: EVENT_SERIES, icon: BellIcon },
+};
+
+function paddedDomain(slice) {
+  if (!slice.length) return [toTs(todayStr()) - 43200000, toTs(todayStr()) + 43200000];
+  const tss = slice.map((d) => d.ts);
+  return [Math.min(...tss) - 43200000, Math.max(...tss) + 43200000];
+}
+
+// One chart component that renders every metric view (avoids duplicating chart markup per metric)
+
+// A curve that looks hand-inked: monotone smoothing, but every point gets a small, stable wobble
+// (seeded by its index so it never jitters between renders). Dots stay on the true values.
+const handInked = (context) => {
+  const inner = d3.curveMonotoneX(context);
+  let i = 0;
+  const wobble = (n, salt) => ((((n * 7919 + salt * 104729) % 97) / 97) - 0.5) * 2.6; // ±1.3px
+  return {
+    lineStart() { i = 0; inner.lineStart(); },
+    lineEnd() { inner.lineEnd(); },
+    point(x, y) { inner.point(x + wobble(i, 1), y + wobble(i, 2)); i++; },
+    areaStart() { inner.areaStart && inner.areaStart(); },
+    areaEnd() { inner.areaEnd && inner.areaEnd(); },
+  };
+};
+
+function MetricChart({ data, bands, domain, height, onPointClick, products, kind }) {
+  const dotClick = (payload) => { if (payload && payload.date) onPointClick(payload.date); };
+  // Hollow, ink-ringed dots (like the chosen sample): white fill with a colored ring, kept small
+  // enough that the line stays continuous between dense points. Big invisible touch target behind.
+  const makeDot = (color, r = 4) => (props) => {
+    const { cx, cy, payload } = props;
+    if (cx == null || cy == null) return null;
+    return (
+      <g key={payload.date} style={{ cursor: "pointer" }} onClick={() => dotClick(payload)}>
+        <circle cx={cx} cy={cy} r={16} fill="transparent" />
+        <circle cx={cx} cy={cy} r={r} fill="#fff" stroke={color} strokeWidth={2.6} />
+      </g>
+    );
+  };
+  const makeEventDot = (color) => (props) => {
+    const { cx, cy, payload } = props;
+    if (cx == null || cy == null) return null;
+    return (
+      <g key={payload.date} style={{ cursor: "pointer" }} onClick={() => dotClick(payload)}>
+        <circle cx={cx} cy={cy} r={16} fill="transparent" />
+        <circle cx={cx} cy={cy} r={5.5} fill="#fff" stroke={color} strokeWidth={3} />
+      </g>
+    );
+  };
+  const lineProps = { type: handInked, strokeLinecap: "round", strokeLinejoin: "round", isAnimationActive: false };
+  // Ticks come from real recorded days (about 6 of them) so every chart — including the sparse
+  // events chart — gets a consistent, readable axis instead of whatever the scale auto-picks.
+  const tickStep = Math.max(1, Math.ceil(data.length / 6));
+  const ticks = data.filter((_, i) => i % tickStep === 0 || i === data.length - 1).map((d) => d.ts);
+  const xAxisProps = { dataKey: "ts", type: "number", domain, scale: "time", ticks, tickFormatter: fmtMD, stroke: COLORS.inkSoft, tick: { fontSize: 11 } };
+  // Bands are clamped to the visible window so a product that started before the window still
+  // gets its label at the visible left edge. Labels sit at the bottom, which is the emptiest area.
+  // ReferenceArea must name the y-axis in dual-axis charts, otherwise it silently doesn't render.
+  const bandEls = (yAxisId) => bands
+    .map((b) => ({ ...b, x1: Math.max(b.x1, domain[0]), x2: Math.min(b.x2, domain[1]) }))
+    .filter((b) => b.x2 > b.x1)
+    .map((b) => (
+      <ReferenceArea
+        key={b.key} x1={b.x1} x2={b.x2} fill={b.fill} fillOpacity={0.6} ifOverflow="hidden"
+        {...(yAxisId ? { yAxisId } : {})}
+        label={b.label ? { value: b.label, position: "insideBottomLeft", fill: b.labelColor || COLORS.inkSoft, fontSize: 11, fontWeight: 700, offset: 6 } : undefined}
+      />
+    ));
+
+  if (kind === "health") {
+    return (
+      <ResponsiveContainer width="100%" height={height}>
+        <ComposedChart data={data} margin={{ top: 10, right: 14, left: -4, bottom: 0 }}>
+          {bandEls("total")}
+          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.line} vertical={false} />
+          <XAxis {...xAxisProps} />
+          <YAxis yAxisId="total" stroke={COLORS.accent} tick={{ fontSize: 11 }} width={34} />
+          <YAxis yAxisId="mental" orientation="right" domain={[0, 5]} ticks={[0, 1, 2, 3, 4, 5]} stroke={COLORS.blue} tick={{ fontSize: 11 }} width={26} />
+          <Line yAxisId="total" dataKey="total" stroke={COLORS.accent} strokeWidth={2.8} dot={makeDot(COLORS.accent)} activeDot={false} {...lineProps} />
+          <Line yAxisId="mental" dataKey="mental" stroke={COLORS.blue} strokeWidth={2.8} dot={makeDot(COLORS.blue)} activeDot={false} {...lineProps} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    );
+  }
+  if (kind === "total") {
+    return (
+      <ResponsiveContainer width="100%" height={height}>
+        <LineChart data={data} margin={{ top: 10, right: 14, left: -18, bottom: 0 }}>
+          {bandEls()}
+          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.line} vertical={false} />
+          <XAxis {...xAxisProps} />
+          <YAxis stroke={COLORS.inkSoft} tick={{ fontSize: 11 }} />
+          <Line dataKey="total" stroke={COLORS.accent} strokeWidth={2.8} dot={makeDot(COLORS.accent)} activeDot={false} {...lineProps} />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  }
+  if (kind === "mental") {
+    return (
+      <ResponsiveContainer width="100%" height={height}>
+        <LineChart data={data} margin={{ top: 10, right: 14, left: -18, bottom: 0 }}>
+          {bandEls()}
+          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.line} vertical={false} />
+          <XAxis {...xAxisProps} />
+          <YAxis domain={[0, 5]} ticks={[0, 1, 2, 3, 4, 5]} stroke={COLORS.inkSoft} tick={{ fontSize: 11 }} />
+          <Line dataKey="mental" stroke={COLORS.blue} strokeWidth={2.8} dot={makeDot(COLORS.blue)} activeDot={false} {...lineProps} />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  }
+  if (kind === "stool") {
+    return (
+      <ResponsiveContainer width="100%" height={height}>
+        <LineChart data={data} margin={{ top: 10, right: 14, left: -18, bottom: 0 }}>
+          {bandEls()}
+          {/* normal Bristol range (3–4) shaded so both extremes read as "off" at a glance */}
+          <ReferenceArea y1={3} y2={4} fill={COLORS.accent} fillOpacity={0.12} ifOverflow="visible" />
+          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.line} vertical={false} />
+          <XAxis {...xAxisProps} />
+          <YAxis domain={[1, 7]} stroke={COLORS.inkSoft} tick={{ fontSize: 11 }} />
+          <Line dataKey="stool" stroke={COLORS.gold} strokeWidth={2.8} dot={makeDot(COLORS.gold)} activeDot={false} {...lineProps} />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  }
+  // events — discrete markers instead of a misleading continuous line; blank days mean nothing happened
+  const vomitPts = data.filter((d) => d.vomit > 0).map((d) => ({ ...d, _row: 1 }));
+  const stoolPts = data.filter((d) => d.stool <= 2 || d.stool >= 6).map((d) => ({ ...d, _row: 0 }));
+  if (vomitPts.length === 0 && stoolPts.length === 0) {
+    return (
+      <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.inkSoft, fontSize: 12 }}>
+        這段期間沒有嘔吐或便便異常紀錄
+      </div>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <ComposedChart data={data} margin={{ top: 4, right: 8, left: -4, bottom: 0 }}>
+        {bandEls()}
+        <CartesianGrid strokeDasharray="3 3" stroke={COLORS.line} vertical={false} />
+        <XAxis {...xAxisProps} />
+        <YAxis type="number" domain={[-1.1, 1.6]} ticks={[0, 1]} width={70} stroke={COLORS.inkSoft} tick={{ fontSize: 11 }}
+          tickFormatter={(v) => (v === 1 ? "嘔吐" : v === 0 ? "便便異常" : "")} />
+        <Scatter data={stoolPts} dataKey="_row" fill={COLORS.gold} shape={makeEventDot(COLORS.gold)} isAnimationActive={false} />
+        <Scatter data={vomitPts} dataKey="_row" fill={COLORS.danger} shape={makeEventDot(COLORS.danger)} isAnimationActive={false} />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ---------- Full-screen zoomable / pannable trend explorer (layer 2) — shared by all 4 metrics ----------
+const ZOOM_MIN = 7;
+const ZOOM_STEP = 5;
+
+function ExpandedChartView({ chartData, bands, products, role, existingDates, onSaveRecord, onDeleteRecord, metric, initialDate, onOpenInHistory, onQuickAddProduct, onClose }) {
+  const meta = CHART_META[metric] || CHART_META.health;
+  const total = chartData.length;
+  const initialIndex = initialDate ? chartData.findIndex((d) => d.date === initialDate) : -1;
+  const defaultViewDays = Math.min(20, total || 20);
+
+  const [viewDays, setViewDays] = useState(defaultViewDays);
+  const [windowStart, setWindowStart] = useState(() => {
+    if (initialIndex >= 0) return clamp(initialIndex - defaultViewDays / 2, 0, Math.max(0, total - defaultViewDays));
+    return Math.max(0, total - defaultViewDays);
+  });
+  const [selectedDate, setSelectedDate] = useState(initialDate || null);
+  const containerRef = useRef(null);
+  const dragRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+
+  const maxStart = Math.max(0, total - viewDays);
+  const startIdx = clamp(Math.round(windowStart), 0, maxStart);
+  const windowed = chartData.slice(startIdx, startIdx + viewDays);
+  const domain = paddedDomain(windowed);
+  const rangeLabel = windowed.length ? `${windowed[0].date} ～ ${windowed[windowed.length - 1].date}` : "";
+
+  const applyZoom = (nextViewDays) => {
+    const capped = clamp(nextViewDays, ZOOM_MIN, Math.max(ZOOM_MIN, total));
+    const center = windowStart + viewDays / 2;
+    const nextMaxStart = Math.max(0, total - capped);
+    const nextStart = clamp(center - capped / 2, 0, nextMaxStart);
+    setViewDays(capped);
+    setWindowStart(nextStart);
+  };
+
+  const DRAG_THRESHOLD = 6;
+  const onPointerDown = (e) => {
+    dragRef.current = { startX: e.clientX, startWindowStart: windowStart, moved: false, pointerId: e.pointerId, target: e.currentTarget };
+  };
+  const onPointerMove = (e) => {
+    if (!dragRef.current || !containerRef.current) return;
+    const deltaX = e.clientX - dragRef.current.startX;
+    if (!dragRef.current.moved) {
+      if (Math.abs(deltaX) < DRAG_THRESHOLD) return; // small movement — treat as a tap, don't hijack it
+      dragRef.current.moved = true;
+      setDragging(true);
+      try { dragRef.current.target.setPointerCapture(dragRef.current.pointerId); } catch (err) { /* noop */ }
+    }
+    const width = containerRef.current.getBoundingClientRect().width || 300;
+    const daysPerPixel = viewDays / width;
+    const nextStart = clamp(dragRef.current.startWindowStart - deltaX * daysPerPixel, 0, maxStart);
+    setWindowStart(nextStart);
+  };
+  const endDrag = () => { dragRef.current = null; setDragging(false); };
+
+  const handlePointClick = (date) => setSelectedDate(date);
+  const selectedRecord = selectedDate ? chartData.find((d) => d.date === selectedDate) : null;
+  const selectedProduct = selectedRecord ? products.find((p) => p.id === selectedRecord.productId) : null;
+
+  const zoomPresets = [7, 20, 30, 60];
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: COLORS.bg, zIndex: 60, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: `1px solid ${COLORS.line}`, gap: 8 }}>
+        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>
+          <X size={20} />關閉
+        </button>
+        <div style={{ textAlign: "center", minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink, display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+            {meta.icon && <meta.icon size={15} color={COLORS.accent} />}
+            {meta.short || meta.title}
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.inkSoft }}>{rangeLabel}　（顯示 {windowed.length} 天）</div>
+        </div>
+        <div style={{ width: 56, flexShrink: 0 }} />
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+        {meta.legend && <TrendLegend series={meta.legend} />}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+          <button onClick={() => applyZoom(viewDays + ZOOM_STEP)} title="縮小（顯示更多天）" style={{
+            width: 32, height: 32, borderRadius: 9, border: `1px solid ${COLORS.line}`, background: "#fff", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.ink,
+          }}><ZoomOut size={16} /></button>
+          <button onClick={() => applyZoom(viewDays - ZOOM_STEP)} title="放大（顯示更少天）" style={{
+            width: 32, height: 32, borderRadius: 9, border: `1px solid ${COLORS.line}`, background: "#fff", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.ink,
+          }}><ZoomIn size={16} /></button>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {zoomPresets.map((n) => (
+              <button key={n} onClick={() => applyZoom(n)} style={{
+                padding: "6px 11px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                border: `1px solid ${viewDays === n ? COLORS.accent : COLORS.line}`,
+                background: viewDays === n ? COLORS.accentSoft : "#fff", color: viewDays === n ? COLORS.accent : COLORS.inkSoft,
+              }}>{n}天</button>
+            ))}
+            <button onClick={() => applyZoom(total)} style={{
+              padding: "6px 11px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+              border: `1px solid ${viewDays >= total ? COLORS.accent : COLORS.line}`,
+              background: viewDays >= total ? COLORS.accentSoft : "#fff", color: viewDays >= total ? COLORS.accent : COLORS.inkSoft,
+            }}>全部</button>
+          </div>
+        </div>
+
+        <Card style={{ padding: "12px 8px 4px" }}>
+          <div
+            ref={containerRef}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endDrag}
+            onPointerLeave={endDrag}
+            style={{ cursor: dragging ? "grabbing" : "grab", touchAction: "pan-y" }}
+          >
+            <MetricChart data={windowed} bands={bands} domain={domain} height={260} onPointClick={handlePointClick} products={products} kind={meta.kind} />
+          </div>
+        </Card>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0 16px", gap: 10 }}>
+          <button onClick={() => setWindowStart((w) => clamp(w - viewDays, 0, maxStart))} disabled={startIdx === 0} style={{
+            display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: startIdx === 0 ? "default" : "pointer",
+            color: startIdx === 0 ? COLORS.line : COLORS.inkSoft, fontSize: 12, fontWeight: 600, opacity: startIdx === 0 ? 0.5 : 1,
+          }}><ChevronLeft size={14} />更早</button>
+          <span style={{ fontSize: 11, color: COLORS.inkSoft }}>拖曳圖表可左右瀏覽・點資料點可查看與修改當日紀錄</span>
+          <button onClick={() => setWindowStart((w) => clamp(w + viewDays, 0, maxStart))} disabled={startIdx >= maxStart} style={{
+            display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: startIdx >= maxStart ? "default" : "pointer",
+            color: startIdx >= maxStart ? COLORS.line : COLORS.inkSoft, fontSize: 12, fontWeight: 600, opacity: startIdx >= maxStart ? 0.5 : 1,
+          }}>更近<ChevronRight size={14} /></button>
+        </div>
+
+        {selectedRecord && (
+          <Card>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink }}>{selectedDate} 的紀錄</div>
+              <button onClick={() => setSelectedDate(null)} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft }}><X size={18} /></button>
+            </div>
+            <DayPanelBody
+              key={selectedDate}
+              record={selectedRecord}
+              product={selectedProduct}
+              role={role}
+              products={products}
+              existingDates={existingDates}
+              onSave={(rec) => { onSaveRecord(rec); setSelectedDate(null); }}
+              onDelete={(id) => { onDeleteRecord(id); setSelectedDate(null); }}
+              onOpenInHistory={onOpenInHistory}
+              onQuickAddProduct={onQuickAddProduct}
+            />
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Dashboard ----------
+function Dashboard({ records, products, role, existingDates, onSaveRecord, onDeleteRecord, onOpenInHistory, onQuickAddProduct }) {
+  const [expanded, setExpanded] = useState(null); // { metric, date } | null
+
+  const chartData = useMemo(() => {
+    return [...records]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((r) => ({ ...r, ts: toTs(r.date), total: r.breakfast + r.dinner + r.bedtime }));
+  }, [records]);
+
+  const DAY = 86400000;
+  const domain = useMemo(() => {
+    const tss = chartData.map((d) => d.ts);
+    products.forEach((p) => {
+      tss.push(toTs(p.startDate));
+      tss.push(p.endDate ? toTs(p.endDate) : toTs(todayStr()));
+    });
+    if (tss.length === 0) return [toTs(todayStr()), toTs(todayStr())];
+    // Half-day padding so the first/last hollow dots aren't cut by the axis line
+    return [Math.min(...tss) - DAY / 2, Math.max(...tss) + DAY / 2];
+  }, [chartData, products]);
+
+  if (chartData.length === 0) {
+    return (
+      <Card>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "30px 0" }}>
+          <PawIcon size={28} color={COLORS.line} />
+          <div style={{ color: COLORS.inkSoft, fontSize: 14, textAlign: "center" }}>還沒有任何紀錄，先到「飲食日記」新增第一筆資料吧。</div>
+        </div>
+      </Card>
+    );
+  }
+
+  // A band runs from the START of its first day to the END of its last day, so consecutive
+  // products touch at midnight instead of leaving a one-day white gap between them.
+  const latestTs = chartData.length ? chartData[chartData.length - 1].ts : toTs(todayStr());
+  const bands = products.map((p) => {
+    const c = swatch(p.color);
+    const end = p.endDate ? toTs(p.endDate) + DAY : Math.max(latestTs, toTs(todayStr())) + DAY;
+    return { x1: toTs(p.startDate), x2: end, fill: c.bg, labelColor: c.border, key: p.id, label: p.name };
+  });
+
+  const openExpanded = (metric, date) => setExpanded({ metric, date: date || null });
+
+  const previewData = chartData.slice(-20);
+  const previewDomain = paddedDomain(previewData);
+
+  const renderChartCard = (metric, data, chartDomain, height = 180) => {
+    const meta = CHART_META[metric];
+    return (
+      <Card key={metric}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: COLORS.ink, display: "flex", alignItems: "center", gap: 6 }}>
+          {meta.icon && <meta.icon size={15} color={COLORS.accent} />}
+          {meta.title}
+        </div>
+        {meta.legend && <TrendLegend series={meta.legend} />}
+        <MetricChart data={data} bands={bands} domain={chartDomain} height={height} products={products} kind={meta.kind}
+          onPointClick={(date) => openExpanded(metric, date)} />
+        <Btn size="sm" variant="secondary" onClick={() => openExpanded(metric, null)} style={{ width: "100%", marginTop: 10 }}>
+          <Maximize2 size={14} />展開查看（可縮放／拖曳瀏覽）
+        </Btn>
+      </Card>
+    );
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {renderChartCard("health", previewData, previewDomain, 200)}
+      {renderChartCard("events", chartData, domain, 140)}
+      {renderChartCard("total", chartData, domain)}
+      {renderChartCard("mental", chartData, domain)}
+      {renderChartCard("stool", chartData, domain)}
+
+      <Card>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: COLORS.ink, display: "flex", alignItems: "center", gap: 6 }}>
+          <LeafIcon size={15} color={COLORS.accent} />排除飲食時間軸
+        </div>
+        <Timeline products={products} />
+      </Card>
+
+      {expanded && (
+        <ExpandedChartView
+          chartData={chartData} bands={bands} products={products}
+          role={role} existingDates={existingDates}
+          onSaveRecord={onSaveRecord} onDeleteRecord={onDeleteRecord}
+          metric={expanded.metric} initialDate={expanded.date}
+          onOpenInHistory={onOpenInHistory ? (date) => { onOpenInHistory(date); setExpanded(null); } : null}
+          onQuickAddProduct={onQuickAddProduct}
+          onClose={() => setExpanded(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------- History ----------
+function flagsForRecord(r) {
+  const flags = [];
+  if (r.vomit > 0) flags.push({ key: "vomit", label: `嘔吐 ${r.vomit} 次`, color: COLORS.danger });
+  if (r.mental <= 2) flags.push({ key: "mental", label: "精神偏低", color: COLORS.danger });
+  if (r.stool <= 2) flags.push({ key: "stool", label: "便便偏硬", color: COLORS.gold });
+  if (r.stool >= 6) flags.push({ key: "stool", label: "便便偏軟／腹瀉", color: COLORS.gold });
+  return flags;
+}
+
+// Traffic-light colors so severity reads instantly without doing math on the number
+const mentalColor = (v) => (v <= 2 ? COLORS.danger : v === 3 ? COLORS.gold : COLORS.accent);
+const stoolColor = (v) => (v <= 2 || v >= 6 ? COLORS.danger : v === 5 ? COLORS.gold : COLORS.accent);
+
+function StatPill({ tag, value, color }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+      <span style={{ color: COLORS.inkSoft }}>{tag}</span>
+      <span style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 20, height: 20,
+        padding: "0 6px", borderRadius: 10, background: color + "1F", color, fontSize: 12, fontWeight: 800,
+      }}>{value}</span>
+    </span>
+  );
+}
+
+// One diary entry row — plain neutral border; only "abnormal" gets color, so red stays meaningful
+function RecordRow({ r, onSelect, selectMode, selected, onToggleSelect }) {
+  const total = r.breakfast + r.dinner + r.bedtime;
+  const flagged = r._flags.length > 0;
+  const note = [r.stress && `壓力：${r.stress}`, r.other && `備註：${r.other}`].filter(Boolean).join("　");
+  return (
+    <button onClick={() => (selectMode ? onToggleSelect(r.id) : onSelect(r.date))} style={{
+      display: "flex", flexDirection: "column", width: "100%",
+      textAlign: "left", padding: "10px 12px", borderRadius: 10,
+      border: `1.5px solid ${selectMode && selected ? COLORS.accent : flagged ? COLORS.danger : COLORS.line}`,
+      background: flagged ? COLORS.dangerSoft : "#fff", cursor: "pointer",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          {selectMode && (
+            <div style={{
+              width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+              border: `2px solid ${selected ? COLORS.accent : COLORS.line}`, background: selected ? COLORS.accent : "#fff",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>{selected && <Check size={12} color="#fff" />}</div>
+          )}
+          <span style={{ fontWeight: 700, fontSize: 13, color: COLORS.ink }}>{r.date}</span>
+          {flagged && (
+            <span style={{
+              background: COLORS.danger, color: "#fff", fontSize: 10, fontWeight: 700,
+              padding: "2px 7px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0,
+            }}><AlertCircle size={10} />異常</span>
+          )}
+          {r.stress && <MessageSquare size={12} color={COLORS.gold} style={{ flexShrink: 0 }} />}
+          {r.other && <JournalIcon size={12} color={COLORS.blue} style={{ flexShrink: 0 }} />}
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 13, color: COLORS.ink, flexShrink: 0 }}>{total} g</div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+        <StatPill tag="精神" value={r.mental} color={mentalColor(r.mental)} />
+        <StatPill tag="便便" value={r.stool} color={stoolColor(r.stool)} />
+        {r.vomit > 0 && <StatPill tag="吐" value={r.vomit} color={COLORS.danger} />}
+      </div>
+
+      {note && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 5, marginTop: 6,
+          fontSize: 12, color: COLORS.ink, background: flagged ? "#fff" : COLORS.accentSoft,
+          borderRadius: 8, padding: "6px 8px",
+        }}>
+          <MessageSquare size={13} color={COLORS.accent} style={{ marginTop: 1, flexShrink: 0 }} />
+          <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{note}</span>
+        </div>
+      )}
+
+      {flagged && (
+        <div style={{ fontSize: 11, color: COLORS.danger, fontWeight: 600, marginTop: 6 }}>
+          {r._flags.map((f) => f.label).join("・")}
+        </div>
+      )}
+    </button>
+  );
+}
+
+function History({ records, products, onSelect, onDeleteMany, onConfirm, role, existingDates, onAddRecord, onQuickAddProduct, onAddProduct, onEditProduct, onLoadSample }) {
+  const [search, setSearch] = useState("");
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
+  const [manualOpen, setManualOpen] = useState({}); // productId -> explicit true/false, overrides the default
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [addOpen, setAddOpen] = useState(false);
+
+  const sorted = useMemo(() => [...records].sort((a, b) => b.date.localeCompare(a.date)), [records]);
+  const withFlags = useMemo(() => sorted.map((r) => ({ ...r, _flags: flagsForRecord(r) })), [sorted]);
+  const flaggedCount = withFlags.filter((r) => r._flags.length > 0).length;
+  const searchActive = search.trim().length > 0 || onlyFlagged;
+
+  // Group by product period — the period/average/abnormal-count is stated once in the
+  // header instead of repeating a colored frame on every single card underneath it.
+  const groups = useMemo(() => {
+    const map = new Map();
+    withFlags.forEach((r) => {
+      const key = r.productId || "__none__";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
+    });
+    const arr = Array.from(map.entries()).map(([productId, recs]) => {
+      const product = products.find((x) => x.id === productId);
+      const dates = recs.map((r) => r.date).sort();
+      const avg = Math.round(recs.reduce((s, r) => s + r.breakfast + r.dinner + r.bedtime, 0) / recs.length);
+      const groupFlagged = recs.filter((r) => r._flags.length > 0).length;
+      const visible = recs
+        .filter((r) => r.date.includes(search))
+        .filter((r) => !onlyFlagged || r._flags.length > 0)
+        .sort((a, b) => b.date.localeCompare(a.date));
+      return { productId, product, startDate: dates[0], endDate: dates[dates.length - 1], avg, groupFlagged, count: recs.length, visible };
+    });
+    arr.sort((a, b) => b.endDate.localeCompare(a.endDate));
+    return arr.filter((g) => g.visible.length > 0);
+  }, [withFlags, products, search, onlyFlagged]);
+
+  const isOpen = (productId, idx) => (manualOpen.hasOwnProperty(productId) ? manualOpen[productId] : idx === 0 || searchActive);
+  const toggle = (productId, idx) => setManualOpen((prev) => ({ ...prev, [productId]: !isOpen(productId, idx) }));
+
+  const allVisibleIds = useMemo(() => groups.flatMap((g) => g.visible.map((r) => r.id)), [groups]);
+  const toggleSelect = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+  const toggleSelectAll = () => {
+    setSelected((prev) => (prev.size === allVisibleIds.length ? new Set() : new Set(allVisibleIds)));
+  };
+  const requestBulkDelete = () => {
+    const n = selected.size;
+    onConfirm({
+      message: `確定要刪除選取的 ${n} 筆紀錄嗎？這個動作無法復原。`,
+      onYes: () => { onDeleteMany(Array.from(selected)); exitSelectMode(); },
+    });
+  };
+
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink, display: "flex", alignItems: "center", gap: 6 }}>
+          <JournalIcon size={15} color={COLORS.accent} />飲食日記
+        </div>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {role === "owner" && !selectMode && (
+            <Btn size="sm" onClick={() => setAddOpen(true)}><Plus size={13} />新增紀錄</Btn>
+          )}
+          {role === "owner" && !selectMode && onAddProduct && (
+            <Btn size="sm" variant="secondary" onClick={onAddProduct}><LeafIcon size={13} color={COLORS.accent} />新增產品</Btn>
+          )}
+          {role === "owner" && (
+            <button onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))} style={{
+              display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+              border: `1px solid ${selectMode ? COLORS.danger : COLORS.line}`,
+              background: selectMode ? COLORS.dangerSoft : "#fff", color: selectMode ? COLORS.danger : COLORS.inkSoft,
+            }}>
+              <Trash2 size={13} />{selectMode ? "取消選取" : "刪除部分資料"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <Search size={16} color={COLORS.inkSoft} />
+        <input placeholder="搜尋日期，例如 2026-08" value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...inputStyle, border: "none", padding: "4px 0" }} />
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 12, color: COLORS.inkSoft }}>
+          共 {sorted.length} 天紀錄
+          {flaggedCount > 0 && <span style={{ color: COLORS.danger, fontWeight: 600 }}>・{flaggedCount} 天有異常需留意</span>}
+        </div>
+        {flaggedCount > 0 && !selectMode && (
+          <button onClick={() => setOnlyFlagged((v) => !v)} style={{
+            display: "flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+            border: `1px solid ${onlyFlagged ? COLORS.danger : COLORS.line}`,
+            background: onlyFlagged ? COLORS.dangerSoft : "#fff", color: onlyFlagged ? COLORS.danger : COLORS.inkSoft,
+          }}><AlertCircle size={13} />只看異常</button>
+        )}
+      </div>
+
+      {selectMode && (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 14,
+          padding: "10px 12px", borderRadius: 10, background: COLORS.accentSoft,
+        }}>
+          <button onClick={toggleSelectAll} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.accent, fontSize: 12, fontWeight: 600 }}>
+            {selected.size === allVisibleIds.length && allVisibleIds.length > 0 ? "取消全選" : "全選目前列表"}
+          </button>
+          <Btn size="sm" variant="danger" onClick={requestBulkDelete} disabled={selected.size === 0}>
+            <Trash2 size={13} />刪除已選（{selected.size}）
+          </Btn>
+        </div>
+      )}
+
+      {groups.length === 0 && records.length === 0 && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "24px 0" }}>
+          <PawIcon size={28} color={COLORS.line} />
+          <div style={{ color: COLORS.inkSoft, fontSize: 13, textAlign: "center" }}>還沒有任何紀錄。點上方「新增紀錄」開始記錄。</div>
+          {onLoadSample && (
+            <>
+              <Btn size="sm" variant="secondary" onClick={onLoadSample}>載入範例資料看看效果</Btn>
+              <div style={{ fontSize: 11, color: COLORS.inkSoft, textAlign: "center", maxWidth: 280 }}>
+                範例只用來預覽，之後可以用「刪除部分資料」→「全選目前列表」一次清掉。
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      {groups.length === 0 && records.length > 0 && (
+        <div style={{ color: COLORS.inkSoft, fontSize: 13, padding: "20px 0", textAlign: "center" }}>沒有符合的紀錄。</div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {groups.map((g, idx) => {
+          const c = swatch(g.product?.color);
+          const open = isOpen(g.productId, idx);
+          return (
+            <div key={g.productId}>
+              <div style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+                borderRadius: 10, border: `1px solid ${COLORS.line}`, background: c.bg,
+              }}>
+                <button onClick={() => toggle(g.productId, idx)} style={{
+                  flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8,
+                  padding: "10px 12px", background: "none", border: "none", cursor: "pointer", textAlign: "left",
+                }}>
+                  <ChevronDown size={15} color={COLORS.ink} style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform .15s", flexShrink: 0 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: COLORS.ink }}>{g.product?.name || "未指定產品"}</div>
+                    <div style={{ fontSize: 11, color: COLORS.inkSoft }}>
+                      {g.startDate === g.endDate ? g.startDate : `${g.startDate} ～ ${g.endDate}`}　平均 {g.avg}g／天
+                    </div>
+                  </div>
+                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 10, flexShrink: 0 }}>
+                  {g.groupFlagged > 0 && (
+                    <span style={{
+                      background: COLORS.danger, color: "#fff", fontSize: 11, fontWeight: 700,
+                      padding: "3px 8px", borderRadius: 20,
+                    }}>{g.groupFlagged} 天異常</span>
+                  )}
+                  {role === "owner" && onEditProduct && g.product && (
+                    <button onClick={() => onEditProduct(g.product)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: COLORS.inkSoft, display: "flex" }}>
+                      <Pencil size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {open && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6, paddingLeft: 4 }}>
+                  {g.visible.map((r) => (
+                    <RecordRow key={r.id} r={r} onSelect={onSelect}
+                      selectMode={selectMode} selected={selected.has(r.id)} onToggleSelect={toggleSelect} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {addOpen && (
+        <Modal title="新增紀錄" onClose={() => setAddOpen(false)}>
+          <RecordForm
+            products={products}
+            existingDates={existingDates}
+            onSave={(rec) => { onAddRecord(rec); setAddOpen(false); }}
+            onCancel={() => setAddOpen(false)}
+            onQuickAddProduct={onQuickAddProduct}
+          />
+        </Modal>
+      )}
+    </Card>
+  );
+}
+
+// ---------- Export ----------
+function ExportPanel({ records, products, petName }) {
+  const [range, setRange] = useState("7");
+  const [customStart, setCustomStart] = useState(todayStr());
+  const [customEnd, setCustomEnd] = useState(todayStr());
+  const [warning, setWarning] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const COLS = ["日期", "產品", "早餐(g)", "晚餐(g)", "睡前(g)", "總量(g)", "精神分數", "便便分數", "嘔吐", "壓力事件", "其他"];
+
+  const getFilteredRows = () => {
+    let filtered = [...records];
+    // Anchor "recent" ranges to the most recent entry in the diary itself, not the device's
+    // real-world today — otherwise "最近7天" silently returns nothing once today drifts past
+    // the last recorded date (e.g. demo data, or simply not logging today yet).
+    const latestDate = records.length ? records.reduce((m, r) => (r.date > m ? r.date : m), records[0].date) : todayStr();
+    const anchor = toTs(latestDate);
+    if (range === "7") filtered = filtered.filter((r) => toTs(r.date) >= anchor - 6 * 86400000);
+    else if (range === "30") filtered = filtered.filter((r) => toTs(r.date) >= anchor - 29 * 86400000);
+    else if (range === "custom") filtered = filtered.filter((r) => toTs(r.date) >= toTs(customStart) && toTs(r.date) <= toTs(customEnd));
+    filtered.sort((a, b) => a.date.localeCompare(b.date));
+    return filtered.map((r) => {
+      const p = products.find((x) => x.id === r.productId);
+      return {
+        "日期": r.date, "產品": p?.name || "", "早餐(g)": r.breakfast, "晚餐(g)": r.dinner,
+        "睡前(g)": r.bedtime, "總量(g)": r.breakfast + r.dinner + r.bedtime,
+        "精神分數": r.mental, "便便分數": r.stool, "嘔吐": r.vomit, "壓力事件": r.stress || "", "其他": r.other || "",
+      };
+    });
+  };
+
+  const currentLabel = () => (range === "7" ? "最近7天" : range === "30" ? "最近30天" : range === "all" ? "全部" : `${customStart}_${customEnd}`);
+
+  // Most reliable path on mobile: copy as tab-separated text, then paste straight into a
+  // blank sheet in Excel / Numbers / Google Sheets — this needs no download, no share sheet,
+  // no file system at all, so it sidesteps every in-app-browser quirk above.
+  const doCopy = async () => {
+    setWarning("");
+    setNotice("");
+    const rows = getFilteredRows();
+    if (rows.length === 0) {
+      setWarning("這個區間內沒有任何紀錄，沒有東西可以複製。請換一個日期區間試試看。");
+      return;
+    }
+    const clean = (v) => String(v ?? "").replace(/[\t\r\n]+/g, " ");
+    const tsv = [COLS.join("\t"), ...rows.map((r) => COLS.map((c) => clean(r[c])).join("\t"))].join("\n");
+    try {
+      await navigator.clipboard.writeText(tsv);
+      setNotice("已複製表格內容！打開 Excel／Numbers／Google 試算表，新增一張空白表格，直接貼上即可自動分好欄位。");
+    } catch (e) {
+      setWarning("複製失敗，這台裝置可能不允許網頁存取剪貼簿。可以改用下面的「下載 .xlsx」試試看。");
+    }
+  };
+
+  // Some in-app browsers (e.g. inside chat apps) don't honor <a download>, and instead
+  // navigate to the file and render its raw bytes as text — which is exactly the "亂碼"
+  // page this was producing. Try the mobile share sheet first, then a classic download,
+  // then fall back to opening the file in a new tab as a last resort.
+  const deliverFile = async (blob, filename, mime) => {
+    try {
+      if (navigator.canShare) {
+        const file = new File([blob], filename, { type: mime });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: filename });
+          return "shared";
+        }
+      }
+    } catch (e) {
+      if (e && e.name === "AbortError") return "cancelled"; // user closed the share sheet
+    }
+    try {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+      return "downloaded";
+    } catch (e) {
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener");
+      return "opened";
+    }
+  };
+
+  const doExport = async () => {
+    setWarning("");
+    setNotice("");
+    const rows = getFilteredRows();
+    if (rows.length === 0) {
+      setWarning("這個區間內沒有任何紀錄，沒有產生檔案。請換一個日期區間試試看。");
+      return;
+    }
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 11 }, { wch: 14 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 7 }, { wch: 20 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "排除飲食紀錄");
+    const filename = `${petName || "排除飲食"}紀錄_${currentLabel()}.xlsx`;
+    const mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([wbout], { type: mime });
+
+    const result = await deliverFile(blob, filename, mime);
+    if (result === "opened") setNotice("已在新分頁開啟檔案。如果畫面顯示的是亂碼，請點瀏覽器選單裡的「下載」或「儲存檔案」。");
+    else if (result === "shared") setNotice("已開啟分享／儲存選單，請選擇「儲存至檔案」。");
+  };
+
+  const opt = (val, label) => (
+    <button onClick={() => { setRange(val); setWarning(""); setNotice(""); }} style={{
+      padding: "8px 14px", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer",
+      border: `1px solid ${range === val ? COLORS.accent : COLORS.line}`,
+      background: range === val ? COLORS.accentSoft : "#fff", color: range === val ? COLORS.accent : COLORS.ink,
+    }}>{label}</button>
+  );
+
+  return (
+    <Card>
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: COLORS.ink, display: "flex", alignItems: "center", gap: 6 }}>
+        <Download size={15} color={COLORS.accent} />匯出 Excel
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        {opt("7", "最近 7 天")}{opt("30", "最近 30 天")}{opt("all", "整個排除飲食期間")}{opt("custom", "自訂日期")}
+      </div>
+      {range === "custom" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+          <input type="date" value={customStart} onChange={(e) => { setCustomStart(e.target.value); setWarning(""); setNotice(""); }} style={inputStyle} />
+          <input type="date" value={customEnd} onChange={(e) => { setCustomEnd(e.target.value); setWarning(""); setNotice(""); }} style={inputStyle} />
+        </div>
+      )}
+      {warning && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: COLORS.dangerSoft, color: COLORS.danger, padding: "10px 12px", borderRadius: 10, fontSize: 13, marginBottom: 12 }}>
+          <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>{warning}</span>
+        </div>
+      )}
+      {notice && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: COLORS.accentSoft, color: COLORS.accent, padding: "10px 12px", borderRadius: 10, fontSize: 13, marginBottom: 12 }}>
+          <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>{notice}</span>
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Btn onClick={doCopy}><JournalIcon size={15} color="#fff" />複製表格（貼到 Excel／Numbers 最穩）</Btn>
+        <Btn variant="secondary" onClick={doExport}><Download size={15} />下載 .xlsx 檔案</Btn>
+      </div>
+    </Card>
+  );
+}
+
+// ---------- Sample data (preview only; shown only when the diary is empty) ----------
+function buildSampleData() {
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+  const today = new Date(todayStr() + "T00:00:00");
+  const days = 26;
+  const start = addDays(today, -(days - 1));
+  const switchDate = addDays(today, -(days - 15)); // switch foods on day 15
+  const p1 = { id: "sample-p1", name: "GI32", startDate: start, endDate: addDays(today, -(days - 14)), color: "teal" };
+  const p2 = { id: "sample-p2", name: "新處方飼料", startDate: switchDate, endDate: null, color: "gold" };
+  const products = [p1, p2];
+
+  const records = [];
+  for (let i = 0; i < days; i++) {
+    const date = addDays(today, -(days - 1) + i);
+    const onNewFood = date >= switchDate;
+    const daysSinceSwitch = onNewFood ? i - 14 : -1;
+
+    // appetite dips right after the switch, then recovers
+    let base = 70;
+    if (onNewFood && daysSinceSwitch <= 3) base = 50 + daysSinceSwitch * 5;
+    else if (onNewFood) base = 65 + Math.min(daysSinceSwitch - 3, 8);
+
+    const jitter = () => Math.round((Math.random() - 0.5) * 10);
+    const breakfast = Math.max(0, Math.round(base * 0.35 + jitter()));
+    const dinner = Math.max(0, Math.round(base * 0.4 + jitter()));
+    const bedtime = Math.max(0, Math.round(base * 0.25 + jitter()));
+
+    let mental = onNewFood && daysSinceSwitch >= 0 && daysSinceSwitch <= 2 ? 2 : 4;
+    if (Math.random() < 0.15) mental = Math.max(0, mental - 1);
+
+    let stool = onNewFood && daysSinceSwitch >= 0 && daysSinceSwitch <= 3 ? 6 : 4;
+    if (Math.random() < 0.2) stool = Math.min(7, Math.max(1, stool + (Math.random() < 0.5 ? -1 : 1)));
+
+    const vomit = (onNewFood && daysSinceSwitch >= 0 && daysSinceSwitch <= 2 && Math.random() < 0.4) ? 1 : (Math.random() < 0.05 ? 1 : 0);
+    const stress = i === 5 ? "有客人來訪，比較緊張" : (i === 16 ? "打雷，躲到床底下" : "");
+    const other = i === 20 ? "今天特別黏人" : "";
+
+    records.push({
+      id: `sample-r-${i}`, date, productId: onNewFood ? p2.id : p1.id,
+      breakfast, dinner, bedtime, mental, stool, vomit, other, stress,
+    });
+  }
+  return { products, records };
+}
+
+// ---------- Landing screen ----------
+function LandingScreen({ onEnter, pinSet }) {
+  const cardStyle = {
+    flex: "1 1 220px", background: "#fff", border: `1.5px solid ${COLORS.line}`, borderRadius: 20,
+    padding: "32px 22px", cursor: "pointer", textAlign: "center", display: "flex",
+    flexDirection: "column", alignItems: "center", gap: 10, transition: "transform .12s, box-shadow .12s",
+    position: "relative",
+  };
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px",
+      backgroundImage: `url("${PAW_PATTERN_URL}")`, backgroundRepeat: "repeat",
+    }}>
+      <div style={{ textAlign: "center", marginBottom: 32 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <PawIcon size={22} color={COLORS.accent} />
+          <h1 style={{ fontFamily: "'Source Serif 4', serif", fontSize: 26, margin: 0, color: COLORS.ink }}>排除飲食日記</h1>
+        </div>
+        <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 6 }}>請選擇要進入的介面</div>
+      </div>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", width: "100%", maxWidth: 480, justifyContent: "center" }}>
+        <button
+          style={cardStyle}
+          onClick={() => onEnter("owner")}
+          onMouseEnter={(e) => { e.currentTarget.style.boxShadow = `0 8px 20px rgba(62,98,89,0.15)`; e.currentTarget.style.borderColor = COLORS.accent; }}
+          onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.borderColor = COLORS.line; }}
+        >
+          {pinSet && (
+            <div style={{
+              position: "absolute", top: 12, right: 12, width: 24, height: 24, borderRadius: 12,
+              background: COLORS.accentSoft, display: "flex", alignItems: "center", justifyContent: "center",
+            }}><LockIcon size={12} color={COLORS.accent} /></div>
+          )}
+          <div style={{ width: 56, height: 56, borderRadius: 16, background: COLORS.accentSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <User size={26} color={COLORS.accent} />
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: COLORS.ink }}>主人模式</div>
+          <div style={{ fontSize: 12, color: COLORS.inkSoft, lineHeight: 1.5 }}>新增／修改紀錄、管理產品、查看圖表、匯出 Excel</div>
+        </button>
+        <button
+          style={cardStyle}
+          onClick={() => onEnter("vet")}
+          onMouseEnter={(e) => { e.currentTarget.style.boxShadow = `0 8px 20px rgba(76,122,158,0.15)`; e.currentTarget.style.borderColor = COLORS.blue; }}
+          onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.borderColor = COLORS.line; }}
+        >
+          <div style={{ width: 56, height: 56, borderRadius: 16, background: COLORS.blueSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Stethoscope size={26} color={COLORS.blue} />
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: COLORS.ink }}>醫師模式</div>
+          <div style={{ fontSize: 12, color: COLORS.inkSoft, lineHeight: 1.5 }}>唯讀查看最新紀錄與圖表，無法新增或修改</div>
+        </button>
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 26, textAlign: "center", maxWidth: 380 }}>
+        資料儲存於雲端，主人與獸醫看到的是同一份即時紀錄。
+      </div>
+    </div>
+  );
+}
+
+// ---------- PIN unlock screen for owner mode ----------
+function PinPromptScreen({ value, onChange, error, onSubmit, onCancel }) {
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px",
+      backgroundImage: `url("${PAW_PATTERN_URL}")`, backgroundRepeat: "repeat",
+    }}>
+      <div style={{ width: 64, height: 64, borderRadius: 20, background: COLORS.accentSoft, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
+        <LockIcon size={28} color={COLORS.accent} />
+      </div>
+      <div style={{ fontWeight: 700, fontSize: 17, color: COLORS.ink, marginBottom: 4 }}>輸入 PIN 進入主人模式</div>
+      <div style={{ fontSize: 12, color: COLORS.inkSoft, marginBottom: 20 }}>醫師模式不需要 PIN，可直接查看</div>
+      <input
+        type="password" inputMode="numeric" autoFocus value={value} maxLength={8}
+        onChange={(e) => onChange(e.target.value.replace(/\D/g, ""))}
+        onKeyDown={(e) => { if (e.key === "Enter") onSubmit(); }}
+        style={{ ...inputStyle, width: 180, textAlign: "center", fontSize: 22, letterSpacing: 8, marginBottom: 10 }}
+        placeholder="••••"
+      />
+      {error && <div style={{ color: COLORS.danger, fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+        <Btn variant="ghost" onClick={onCancel}>取消</Btn>
+        <Btn onClick={onSubmit}>解鎖</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Set / change / remove the owner-mode PIN ----------
+function PinSettingsForm({ currentPin, onSetPin, onRemovePin, onClose }) {
+  const [pin1, setPin1] = useState("");
+  const [pin2, setPin2] = useState("");
+  const [error, setError] = useState("");
+
+  const handleSave = () => {
+    if (pin1.length < 4) { setError("PIN 至少要 4 碼數字"); return; }
+    if (pin1 !== pin2) { setError("兩次輸入的 PIN 不一致"); return; }
+    onSetPin(pin1);
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: COLORS.inkSoft, lineHeight: 1.6, marginBottom: 16 }}>
+        設定後，任何人打開這個連結想切換到「主人模式」都需要輸入 PIN 才能新增或修改資料。醫師模式不受影響，一樣可以直接查看。
+        {currentPin && <><br /><strong style={{ color: COLORS.accent }}>目前已設定 PIN 保護。</strong></>}
+      </div>
+      <Field label={currentPin ? "設定新的 PIN（將取代舊的）" : "設定 PIN（4～8 碼數字）"}>
+        <input type="password" inputMode="numeric" maxLength={8} value={pin1}
+          onChange={(e) => { setPin1(e.target.value.replace(/\D/g, "")); setError(""); }}
+          style={{ ...inputStyle, letterSpacing: 4 }} placeholder="••••" />
+      </Field>
+      <Field label="再輸入一次確認">
+        <input type="password" inputMode="numeric" maxLength={8} value={pin2}
+          onChange={(e) => { setPin2(e.target.value.replace(/\D/g, "")); setError(""); }}
+          style={{ ...inputStyle, letterSpacing: 4 }} placeholder="••••" />
+      </Field>
+      {error && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: COLORS.dangerSoft, color: COLORS.danger, padding: "10px 12px", borderRadius: 10, fontSize: 13, marginBottom: 14 }}>
+          <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>{error}</span>
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12, gap: 10 }}>
+        <div>{currentPin && <Btn variant="danger" onClick={onRemovePin}>移除 PIN 保護</Btn>}</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="ghost" onClick={onClose}>取消</Btn>
+          <Btn onClick={handleSave}><Check size={15} />儲存</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Pet picker: choose which cat's diary to open ----------
+function PetPickerScreen({ pets, role, onPick, onAdd, onEdit, onBack }) {
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px",
+      backgroundImage: `url("${PAW_PATTERN_URL}")`, backgroundRepeat: "repeat",
+    }}>
+      <div style={{ textAlign: "center", marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <PawIcon size={22} color={COLORS.accent} />
+          <h1 style={{ fontFamily: "'Source Serif 4', serif", fontSize: 24, margin: 0, color: COLORS.ink }}>要看誰的日記？</h1>
+        </div>
+        <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 6 }}>{role === "owner" ? "主人模式" : "醫師模式（唯讀）"}</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", maxWidth: 420 }}>
+        {pets.map((p) => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button onClick={() => onPick(p.id)} style={{
+              flex: 1, display: "flex", alignItems: "center", gap: 12, padding: "16px 18px", borderRadius: 16,
+              background: "#fff", border: `1.5px solid ${COLORS.line}`, boxShadow: COLORS.shadow, cursor: "pointer", textAlign: "left",
+            }}>
+              <div style={{ width: 40, height: 40, borderRadius: 12, background: COLORS.accentSoft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <PawIcon size={20} color={COLORS.accent} />
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: COLORS.ink }}>{p.name}</div>
+            </button>
+            {role === "owner" && onEdit && (
+              <button onClick={() => onEdit(p)} title="編輯" style={{
+                width: 40, height: 40, borderRadius: 12, background: "#fff", border: `1px solid ${COLORS.line}`,
+                cursor: "pointer", color: COLORS.inkSoft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              }}><Pencil size={15} /></button>
+            )}
+          </div>
+        ))}
+        {role === "owner" && onAdd && (
+          <Btn variant="secondary" onClick={onAdd} style={{ marginTop: 4 }}><Plus size={15} />新增記錄對象</Btn>
+        )}
+      </div>
+      <button onClick={onBack} style={{ marginTop: 22, background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+        <ChevronLeft size={15} />回到首頁
+      </button>
+    </div>
+  );
+}
+
+function PetForm({ initial, canDelete, onSave, onDelete, onCancel }) {
+  const [name, setName] = useState(initial?.name || "");
+  const [error, setError] = useState("");
+  const handleSave = () => {
+    if (!name.trim()) { setError("請輸入名字"); return; }
+    onSave({ id: initial?.id || uid(), name: name.trim() });
+  };
+  return (
+    <div>
+      {error && (
+        <div style={{ background: COLORS.dangerSoft, color: COLORS.danger, padding: "10px 12px", borderRadius: 10, fontSize: 13, marginBottom: 14 }}>{error}</div>
+      )}
+      <Field label="名字"><input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} placeholder="例如：辛巴" autoFocus /></Field>
+      {initial && (
+        <div style={{ fontSize: 12, color: COLORS.inkSoft, lineHeight: 1.6, marginBottom: 12 }}>
+          {canDelete ? "刪除會一併移除這個對象的所有紀錄與產品，無法復原。" : "至少要保留一個記錄對象，所以這個不能刪除。"}
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12, gap: 10 }}>
+        <div>{initial && canDelete && <Btn variant="danger" onClick={() => onDelete(initial.id)}><Trash2 size={15} />刪除</Btn>}</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="ghost" onClick={onCancel}>取消</Btn>
+          <Btn onClick={handleSave}><Check size={15} />儲存</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Main App ----------
+function App() {
+  const [screen, setScreen] = useState("landing"); // 'landing' | 'pets' | 'app'
+  const [role, setRole] = useState("owner"); // 'owner' | 'vet'
+  const [tab, setTab] = useState(null); // null = layer-2 hub menu; a key = layer-3 section detail
+  const [pets, setPets] = useState([]);
+  const [petId, setPetId] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(null); // {type:'addProduct'|'editProduct'|'dayPanel', payload}
+  const [ownerPin, setOwnerPin] = useState(""); // "" = no PIN protection set
+  const [pinPrompt, setPinPrompt] = useState(false); // true while entering PIN to unlock owner mode
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [pinSettingsOpen, setPinSettingsOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null); // { message, onYes } — replaces window.confirm, which the sandbox can silently block
+  const [petModal, setPetModal] = useState(null); // { mode:'add'|'edit', pet }
+
+  useEffect(() => {
+    (async () => { setOwnerPin(await loadPin()); })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const list = await loadPetsWithMigration();
+      setPets(list);
+      setLoading(false);
+    })();
+  }, []);
+
+  // Each pet keeps its own records and products, so switching pets reloads that pet's data
+  const [petLoading, setPetLoading] = useState(false);
+  useEffect(() => {
+    if (!petId) { setProducts([]); setRecords([]); return; }
+    let cancelled = false;
+    setPetLoading(true);
+    (async () => {
+      const [p, r] = await Promise.all([loadKey(productsKey(petId)), loadKey(recordsKey(petId))]);
+      if (!cancelled) { setProducts(p); setRecords(r); setPetLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [petId]);
+
+  const persistPets = useCallback(async (next) => { setPets(next); await saveKey(KEY_PETS, next); }, []);
+  const persistRecords = useCallback(async (next) => { setRecords(next); if (petId) await saveKey(recordsKey(petId), next); }, [petId]);
+  const persistProducts = useCallback(async (next) => { setProducts(next); if (petId) await saveKey(productsKey(petId), next); }, [petId]);
+
+  const currentPet = pets.find((p) => p.id === petId) || null;
+  const savePet = async (pet) => {
+    const exists = pets.some((p) => p.id === pet.id);
+    await persistPets(exists ? pets.map((p) => (p.id === pet.id ? pet : p)) : [...pets, pet]);
+    setPetModal(null);
+  };
+  const deletePet = async (id) => {
+    if (pets.length <= 1) return; // always keep at least one pet
+    await persistPets(pets.filter((p) => p.id !== id));
+    try { await window.storage.delete(productsKey(id), true); } catch (e) { /* noop */ }
+    try { await window.storage.delete(recordsKey(id), true); } catch (e) { /* noop */ }
+    if (petId === id) { setPetId(null); setScreen("pets"); }
+    setPetModal(null);
+  };
+  // After picking a role: go straight in if there's only one pet, otherwise ask which pet
+  const enterAs = (r) => {
+    setRole(r); setTab(null);
+    if (pets.length === 1) { setPetId(pets[0].id); setScreen("app"); }
+    else { setScreen("pets"); }
+  };
+  const choosePet = (id) => { setPetId(id); setTab(null); setScreen("app"); };
+
+  const saveRecord = (rec) => {
+    const exists = records.some((r) => r.id === rec.id);
+    const next = exists ? records.map((r) => (r.id === rec.id ? rec : r)) : [...records, rec];
+    persistRecords(next);
+    setModal(null);
+  };
+  const deleteRecord = (id) => { persistRecords(records.filter((r) => r.id !== id)); setModal(null); };
+  const saveProduct = (prod) => {
+    const exists = products.some((p) => p.id === prod.id);
+    const next = exists ? products.map((p) => (p.id === prod.id ? prod : p)) : [...products, prod];
+    persistProducts(next);
+    setModal(null);
+  };
+  const deleteProduct = (id) => { persistProducts(products.filter((p) => p.id !== id)); setModal(null); };
+  const deleteRecords = (ids) => { persistRecords(records.filter((r) => !ids.includes(r.id))); };
+  // startDate defaults to the record being written, so a product added while back-filling an
+  // earlier day covers that day on the charts instead of starting "today"
+  const quickAddProduct = (name, startDate) => {
+    const prod = { id: uid(), name: name.trim(), startDate: startDate || todayStr(), endDate: null, color: PALETTE[products.length % PALETTE.length].key };
+    persistProducts([...products, prod]);
+    return prod;
+  };
+  const loadSampleData = () => {
+    const { products: sp, records: sr } = buildSampleData();
+    persistProducts(sp);
+    persistRecords(sr);
+  };
+
+  const openDayByDate = (date) => {
+    const rec = records.find((r) => r.date === date);
+    if (!rec) return;
+    setModal({ type: "dayPanel", payload: rec });
+  };
+  const openInHistory = (date) => { setTab("history"); openDayByDate(date); };
+
+  const handleSelectRole = (r) => {
+    if (r === "owner" && ownerPin) {
+      setPinInput(""); setPinError(""); setPinPrompt(true);
+    } else {
+      enterAs(r);
+    }
+  };
+  const submitPin = () => {
+    if (pinInput === ownerPin) {
+      setPinPrompt(false); setPinInput(""); setPinError("");
+      enterAs("owner");
+    } else {
+      setPinError("PIN 不正確，請再試一次");
+      setPinInput("");
+    }
+  };
+  const setNewPin = async (pin) => { await savePin(pin); setOwnerPin(pin); };
+  const removePin = async () => { await clearPin(); setOwnerPin(""); };
+
+  const existingDates = records.map((r) => r.date);
+  const TAB_META = {
+    dashboard: { label: "趨勢總覽", Icon: HeartIcon, desc: "圖表與健康趨勢", bg: COLORS.accentSoft },
+    history: { label: "飲食日記", Icon: JournalIcon, desc: "新增紀錄、管理產品", bg: COLORS.blueSoft },
+    export: { label: "匯出", Icon: Download, desc: "匯出 Excel／複製表格", bg: "#F3DEE0" },
+  };
+  const tabs = role === "owner"
+    ? [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"]]
+    : [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"]];
+
+  useEffect(() => { if (role === "vet" && tab && !["dashboard", "history", "export"].includes(tab)) setTab(null); }, [role]); // eslint-disable-line
+
+  if (screen === "landing") {
+    return (
+      <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", background: COLORS.bg, minHeight: "100%", color: COLORS.ink }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+          * { box-sizing: border-box; }
+        `}</style>
+        {pinPrompt ? (
+          <PinPromptScreen
+            value={pinInput} onChange={setPinInput} error={pinError}
+            onSubmit={submitPin} onCancel={() => { setPinPrompt(false); setPinInput(""); setPinError(""); }}
+          />
+        ) : (
+          <LandingScreen onEnter={handleSelectRole} pinSet={!!ownerPin} />
+        )}
+      </div>
+    );
+  }
+
+  if (screen === "pets") {
+    return (
+      <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", background: COLORS.bg, minHeight: "100%", color: COLORS.ink }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+          * { box-sizing: border-box; }
+          input, select, textarea { font-family: inherit; }
+        `}</style>
+        <PetPickerScreen
+          pets={pets} role={role} onPick={choosePet}
+          onAdd={role === "owner" ? () => setPetModal({ mode: "add" }) : undefined}
+          onEdit={role === "owner" ? (p) => setPetModal({ mode: "edit", pet: p }) : undefined}
+          onBack={() => setScreen("landing")}
+        />
+        {petModal && (
+          <Modal title={petModal.mode === "add" ? "新增記錄對象" : "編輯記錄對象"} onClose={() => setPetModal(null)}>
+            <PetForm
+              initial={petModal.pet}
+              canDelete={pets.length > 1}
+              onSave={savePet}
+              onDelete={(id) => setConfirmDialog({ message: `確定要刪除「${petModal.pet?.name}」和牠的所有紀錄嗎？無法復原。`, onYes: () => deletePet(id) })}
+              onCancel={() => setPetModal(null)}
+            />
+          </Modal>
+        )}
+        {confirmDialog && (
+          <Modal title="請確認" onClose={() => setConfirmDialog(null)}>
+            <div style={{ fontSize: 14, color: COLORS.ink, lineHeight: 1.6, marginBottom: 20 }}>{confirmDialog.message}</div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>取消</Btn>
+              <Btn variant="danger" onClick={() => { confirmDialog.onYes(); setConfirmDialog(null); }}>確定</Btn>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      fontFamily: "'IBM Plex Sans', sans-serif", background: COLORS.bg, minHeight: "100%", color: COLORS.ink,
+      backgroundImage: `url("${PAW_PATTERN_URL}")`, backgroundRepeat: "repeat",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+        * { box-sizing: border-box; }
+        input, select, textarea { font-family: inherit; }
+        input:focus, select:focus, textarea:focus { outline: 2px solid ${COLORS.accent}44; border-color: ${COLORS.accent}; }
+      `}</style>
+
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "18px 16px 40px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6, gap: 8 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <PawIcon size={18} color={COLORS.accent} />
+              <h1 style={{ fontFamily: "'Source Serif 4', serif", fontSize: 24, margin: 0, color: COLORS.ink }}>
+                {currentPet ? `${currentPet.name}的排除飲食日記` : "排除飲食日記"}
+              </h1>
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>
+              {role === "owner" ? "主人模式" : "醫師模式（唯讀）"}・資料同步於雲端
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button onClick={() => { setScreen("pets"); setTab(null); }} title="切換記錄對象" style={{
+              display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
+              borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
+            }}><PawIcon size={13} color={COLORS.inkSoft} />切換對象</button>
+            {role === "owner" && (
+              <button onClick={() => setPinSettingsOpen(true)} title="PIN 保護設定" style={{
+                display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
+                borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
+              }}><LockIcon size={14} color={ownerPin ? COLORS.accent : COLORS.inkSoft} /></button>
+            )}
+            <button onClick={() => { setScreen("landing"); setTab(null); }} style={{
+              display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
+              borderRadius: 9, padding: "7px 12px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
+            }}><Home size={14} />切換介面</button>
+          </div>
+        </div>
+
+        {loading || petLoading ? (
+          <div style={{ textAlign: "center", padding: 40, color: COLORS.inkSoft }}>載入中…</div>
+        ) : tab === null ? (
+          // ---- Layer 2: hub menu — hand-drawn icon tiles ----
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {tabs.map(([key]) => {
+              const meta = TAB_META[key];
+              return (
+                <button
+                  key={key}
+                  onClick={() => setTab(key)}
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+                    padding: "22px 12px", borderRadius: 18, border: `1px solid ${COLORS.line}`,
+                    background: "#fff", boxShadow: COLORS.shadow, cursor: "pointer", textAlign: "center",
+                  }}
+                >
+                  <div style={{ width: 52, height: 52, borderRadius: 16, background: meta.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <meta.Icon size={26} color={COLORS.accent} />
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink }}>{meta.label}</div>
+                  <div style={{ fontSize: 11, color: COLORS.inkSoft }}>{meta.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          // ---- Layer 3: section detail, with a way back to the hub ----
+          <div>
+            <button onClick={() => setTab(null)} style={{
+              display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer",
+              color: COLORS.inkSoft, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 14,
+            }}>
+              <ChevronLeft size={16} />返回
+            </button>
+
+            {tab === "dashboard" && (
+              <Dashboard
+                records={records} products={products}
+                role={role} existingDates={existingDates}
+                onSaveRecord={saveRecord} onDeleteRecord={deleteRecord}
+                onOpenInHistory={openInHistory} onQuickAddProduct={quickAddProduct}
+              />
+            )}
+            {tab === "history" && (
+              <History
+                records={records} products={products} onSelect={openDayByDate}
+                onDeleteMany={deleteRecords} onConfirm={setConfirmDialog}
+                role={role} existingDates={existingDates}
+                onAddRecord={role === "owner" ? saveRecord : undefined}
+                onQuickAddProduct={role === "owner" ? quickAddProduct : undefined}
+                onAddProduct={role === "owner" ? () => setModal({ type: "addProduct" }) : undefined}
+                onEditProduct={role === "owner" ? (p) => setModal({ type: "editProduct", payload: p }) : undefined}
+                onLoadSample={role === "owner" ? loadSampleData : undefined}
+              />
+            )}
+            {tab === "export" && <ExportPanel records={records} products={products} petName={currentPet?.name} />}
+          </div>
+        )}
+      </div>
+
+      {modal?.type === "addProduct" && (
+        <Modal title="新增產品" onClose={() => setModal(null)}>
+          <ProductForm onSave={saveProduct} onCancel={() => setModal(null)} />
+        </Modal>
+      )}
+      {modal?.type === "editProduct" && (
+        <Modal title="編輯產品" onClose={() => setModal(null)}>
+          <ProductForm initial={modal.payload} onSave={saveProduct} onCancel={() => setModal(null)} onDelete={deleteProduct} />
+        </Modal>
+      )}
+      {modal?.type === "dayPanel" && (
+        <Modal title={`${modal.payload.date} 紀錄`} onClose={() => setModal(null)}>
+          <DayPanelBody
+            key={modal.payload.date}
+            record={modal.payload}
+            product={products.find((p) => p.id === modal.payload.productId)}
+            role={role}
+            products={products}
+            existingDates={existingDates}
+            onSave={(rec) => { saveRecord(rec); }}
+            onDelete={(id) => { deleteRecord(id); }}
+            onQuickAddProduct={quickAddProduct}
+          />
+        </Modal>
+      )}
+
+      {pinSettingsOpen && (
+        <Modal title="PIN 保護設定" onClose={() => setPinSettingsOpen(false)}>
+          <PinSettingsForm
+            currentPin={ownerPin}
+            onSetPin={async (pin) => { await setNewPin(pin); setPinSettingsOpen(false); }}
+            onRemovePin={async () => { await removePin(); setPinSettingsOpen(false); }}
+            onClose={() => setPinSettingsOpen(false)}
+          />
+        </Modal>
+      )}
+
+      {confirmDialog && (
+        <Modal title="請確認" onClose={() => setConfirmDialog(null)}>
+          <div style={{ fontSize: 14, color: COLORS.ink, lineHeight: 1.6, marginBottom: 20 }}>{confirmDialog.message}</div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>取消</Btn>
+            <Btn variant="danger" onClick={() => { confirmDialog.onYes(); setConfirmDialog(null); }}>確定</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+</body>
+</html>
