@@ -2099,20 +2099,38 @@ function ExportPanel({ records, products, petName }) {
       { header: "精神分數", key: "精神分數", width: 9 },
       { header: "便便分數", key: "便便分數", width: 9 },
       { header: "嘔吐", key: "嘔吐", width: 7 },
-      { header: "壓力事件", key: "壓力事件", width: 34 },
-      { header: "其他", key: "其他", width: 34 },
+      { header: "壓力事件", key: "壓力事件", width: 36 },
+      { header: "其他", key: "其他", width: 36 },
     ];
+    // Numbers on iOS (unlike desktop Excel) does not reliably auto-fit row height to
+    // wrapped text on open, so leaving row.height unset isn't enough — we have to
+    // calculate and set it ourselves. Chinese characters render roughly twice as wide
+    // as the "character" unit Excel's column width is measured in, so a column of
+    // width 36 fits ~16 Chinese characters per visual line, not 36.
+    const COL_WIDTH_CH = 36;
+    const CJK_PER_LINE = Math.floor((COL_WIDTH_CH * 0.9) / 2);
+    const isFullWidth = (ch) => /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/.test(ch);
+    const countLines = (text) => {
+      const str = String(text || "");
+      if (!str) return 1;
+      // Respect any real line breaks the user typed, then wrap each paragraph on its own.
+      return str.split(/\r?\n/).reduce((total, para) => {
+        let w = 0;
+        for (const ch of para) w += isFullWidth(ch) ? 2 : 1;
+        return total + Math.max(1, Math.ceil(w / (CJK_PER_LINE * 2)));
+      }, 0) || 1;
+    };
     sheet.getRow(1).font = { bold: true };
     sheet.getRow(1).alignment = { vertical: "middle", wrapText: true };
     rows.forEach((r) => {
       const row = sheet.addRow(r);
       // Wrap text on every cell so long notes break onto multiple lines instead of
-      // overflowing into (or getting hidden behind) the next column. Deliberately not
-      // setting an explicit row.height here — that forces a fixed ("custom") height and
-      // stops Excel/Numbers from auto-fitting it to the wrapped content, which is what
-      // caused the previous version to clip long notes. Leaving height unset lets each
-      // app calculate the right height itself when the file is opened.
+      // overflowing into (or getting hidden behind) the next column.
       row.eachCell((cell) => { cell.alignment = { vertical: "top", wrapText: true }; });
+      const lines = Math.max(countLines(r["壓力事件"]), countLines(r["其他"]));
+      // ~17px per wrapped line plus a little padding, with headroom so it errs on the
+      // side of slightly too tall rather than clipping the last line again.
+      row.height = Math.max(18, Math.round(lines * 17 * 1.25) + 6);
     });
     const filename = `${petName || ""}飲食記錄_${currentLabel()}.xlsx`;
     const mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
