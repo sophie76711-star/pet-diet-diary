@@ -2107,11 +2107,12 @@ function ExportPanel({ records, products, petName }) {
     rows.forEach((r) => {
       const row = sheet.addRow(r);
       // Wrap text on every cell so long notes break onto multiple lines instead of
-      // overflowing into (or getting hidden behind) the next column.
+      // overflowing into (or getting hidden behind) the next column. Deliberately not
+      // setting an explicit row.height here — that forces a fixed ("custom") height and
+      // stops Excel/Numbers from auto-fitting it to the wrapped content, which is what
+      // caused the previous version to clip long notes. Leaving height unset lets each
+      // app calculate the right height itself when the file is opened.
       row.eachCell((cell) => { cell.alignment = { vertical: "top", wrapText: true }; });
-      // Rough auto-height: ~15px per wrapped line at this column width, minimum one line.
-      const longest = Math.max(String(r["壓力事件"] || "").length, String(r["其他"] || "").length);
-      row.height = Math.max(18, Math.ceil((longest || 1) / 24) * 15 + 6);
     });
     const filename = `${petName || ""}飲食記錄_${currentLabel()}.xlsx`;
     const mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
