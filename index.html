@@ -755,10 +755,30 @@ function Modal({ title, onClose, children, width = 560, footer }) {
   );
 }
 
+// Single-day version of the hub's period score: same idea (start at 100, deduct for
+// what's off), but scored against just this one record instead of a whole product period.
+// Kept separate from HealthSummary/hub scoring on purpose — the hub's period score stays
+// exactly as-is; this only feeds the per-day badge on the day detail page.
+function dayRating(record, product) {
+  const ti = targetInfo(record, product ? [product] : []);
+  const flags = flagsForRecord(record);
+  let score = 100;
+  if (ti) score -= ti.pct < 70 ? 30 : ti.pct < 90 ? 15 : ti.pct > 130 ? 12 : 0;
+  score -= Math.min(30, flags.length * 15); // each flag = vomit, low mood, or abnormal stool
+  if (record.mental === 3) score -= 8; // not flagged, but "just okay" still counts a little
+  score = Math.max(0, Math.min(100, score));
+  return score >= 80
+    ? { score, color: COLORS.accent, word: "今天狀況不錯", mood: 5 }
+    : score >= 55
+      ? { score, color: COLORS.gold, word: "還可以，留意一下", mood: 3 }
+      : { score, color: COLORS.danger, word: "今天需要注意", mood: 1 };
+}
+
 // ---------- Day Detail (read view, used by vet + as base for owner edit) ----------
 function DayDetail({ record, product, products = [] }) {
   const total = record.breakfast + record.dinner + record.bedtime;
   const ti = targetInfo(record, products.length ? products : (product ? [product] : []));
+  const day = dayRating(record, product);
   const meals = [
     { label: "早餐", value: record.breakfast },
     { label: "晚餐", value: record.dinner },
@@ -775,6 +795,21 @@ function DayDetail({ record, product, products = [] }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Whole-day badge: mental + stool + vomit + intake target rolled into one hand-drawn
+          face, so opening a day gives an instant read before scanning the individual numbers
+          below (which stay untouched — this doesn't replace or hide any single indicator). */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 10,
+        background: day.color + "14", border: `1px solid ${day.color}44`,
+        borderRadius: 12, padding: "10px 12px",
+      }}>
+        <CatMoodIcon score={day.mood} size={32} color={day.color} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: day.color }}>{day.word}</div>
+          <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 1 }}>綜合精神、便便、嘔吐與食量估算，僅供參考</div>
+        </div>
+      </div>
+
       {/* Product + total: the two things you look for first */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         {/* Product shown as a pill in its own palette colour, so the feed is identifiable
