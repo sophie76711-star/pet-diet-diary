@@ -384,7 +384,27 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
       </div>
     </div>
   );
-  useEffect(() => { if (renderActions) renderActions(actions); });
+  // Hand the action row to a parent (so a Modal can pin it) without setting parent state on
+  // every render: publish a stable element that reads the latest handlers through a ref.
+  const latest = useRef({ handleSave, onCancel, onDelete, initial });
+  latest.current = { handleSave, onCancel, onDelete, initial };
+  useEffect(() => {
+    if (!renderActions) return;
+    renderActions(
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div>
+          {latest.current.initial && latest.current.onDelete && (
+            <Btn variant="danger" onClick={() => latest.current.onDelete(latest.current.initial.id)}><Trash2 size={15} />刪除</Btn>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="ghost" onClick={() => latest.current.onCancel()}>取消</Btn>
+          <Btn onClick={() => latest.current.handleSave()}><Check size={15} />儲存</Btn>
+        </div>
+      </div>
+    );
+    return () => renderActions(null);
+  }, [renderActions]);
 
   return (
     <div>
@@ -556,8 +576,8 @@ function Modal({ title, onClose, children, width = 480, footer }) {
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(38,51,46,0.45)", zIndex: 50,
-      display: "flex", alignItems: "flex-end", justifyContent: "center",
-    }} onClick={onClose}>
+      display: "flex", alignItems: "center", justifyContent: "center", padding: "0",
+    }} onClick={onClose} className="modal-backdrop">
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -565,6 +585,7 @@ function Modal({ title, onClose, children, width = 480, footer }) {
           height: "100dvh", display: "flex", flexDirection: "column",
           boxShadow: "0 -6px 30px rgba(0,0,0,0.2)",
         }}
+        className="modal-sheet"
       >
         <div style={{
           display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
@@ -722,24 +743,6 @@ function targetInfo(record, products) {
   const color = pct < 70 ? COLORS.danger : pct < 90 ? COLORS.gold : pct > 130 ? COLORS.gold : COLORS.accent;
   const label = pct < 70 ? "明顯偏少" : pct < 90 ? "略偏少" : pct > 130 ? "偏多" : "達標";
   return { target, total, pct, color, label };
-}
-
-// Hand-drawn cat face: mouth curve and eyes follow the mood score, so the number has a face
-function MoodDoodle({ score, size = 26, color = COLORS.accent }) {
-  const happy = score >= 4, ok = score === 3;
-  const mouth = happy ? "M9 15.2q3 2.6 6 0" : ok ? "M9.2 15.4h5.6" : "M9 16.2q3 -2.4 6 0";
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
-      strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4.6 9.4 4.2 4.6l3.9 2.5" />
-      <path d="M19.4 9.4 19.8 4.6l-3.9 2.5" />
-      <path d="M12 5.9c4.3 0 7.4 3 7.4 6.7S16.3 19.4 12 19.4 4.6 16.3 4.6 12.6 7.7 5.9 12 5.9z" />
-      {score <= 1
-        ? (<><path d="M8.2 11.2l1.8 1.8M10 11.2l-1.8 1.8" /><path d="M14 11.2l1.8 1.8M15.8 11.2L14 13" /></>)
-        : (<><path d="M9.1 11.6v.9" /><path d="M14.9 11.6v.9" /></>)}
-      <path d={mouth} />
-    </svg>
-  );
 }
 
 // ---------- Day panel: view first, edit only after tapping 修改 ----------
@@ -2052,7 +2055,7 @@ function HealthSummary({ records, products }) {
   return (
     <Card style={{ marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <MoodDoodle score={tone.mood} size={42} color={tone.color} />
+        <CatMoodIcon score={tone.mood} size={42} color={tone.color} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: 22, fontWeight: 800, color: tone.color, lineHeight: 1.1 }}>{score}</span>
@@ -2477,12 +2480,27 @@ function App() {
         * { box-sizing: border-box; }
         input, select, textarea { font-family: inherit; }
         input:focus, select:focus, textarea:focus { outline: 2px solid ${COLORS.accent}44; border-color: ${COLORS.accent}; }
+        /* On a wide screen a full-height edge-to-edge sheet looks wrong: centre a panel instead */
+        @media (min-width: 640px) {
+          .modal-backdrop { padding: 24px; }
+          .modal-sheet { height: auto !important; max-height: 88dvh; border-radius: 18px; overflow: hidden; }
+          .app-shell { padding-top: 28px !important; }
+        }
       `}</style>
 
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: "16px 16px 40px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 60px)" }}>
-        {/* Settings-style buttons, all grouped on the right. "返回" (below) is the only
-            left-aligned back control, so the two are no longer easy to mix up. */}
-        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 18, gap: 6 }}>
+      <div className="app-shell" style={{ maxWidth: 720, margin: "0 auto", padding: "16px 16px 40px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 60px)" }}>
+        {/* Back sits above the title as a large tap target; the settings-style switches stay
+            on the right so they can't be hit by mistake. */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8 }}>
+          {tab !== null ? (
+            <button onClick={() => setTab(null)} style={{
+              display: "flex", alignItems: "center", gap: 4, background: "#fff",
+              border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: "10px 16px 10px 12px",
+              cursor: "pointer", color: COLORS.accent, fontSize: 15, fontWeight: 700, flexShrink: 0,
+              boxShadow: COLORS.shadow,
+            }}><ChevronLeft size={20} />返回</button>
+          ) : <div />}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button onClick={() => { setScreen("pets"); setTab(null); }} title="切換記錄對象" style={{
             display: "flex", alignItems: "center", gap: 5, background: "#fff", border: `1px solid ${COLORS.line}`,
             borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
@@ -2497,6 +2515,7 @@ function App() {
               borderRadius: 9, padding: "7px 10px", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, fontWeight: 600,
             }}><LockIcon size={14} color={ownerPin ? COLORS.accent : COLORS.inkSoft} /></button>
           )}
+          </div>
         </div>
 
         <div style={{ marginBottom: 6 }}>
@@ -2506,8 +2525,11 @@ function App() {
               {currentPet ? `${currentPet.name}的飲食記錄` : "飲食記錄"}
             </h1>
           </div>
-          <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>
-            {role === "owner" ? "主人模式" : "醫師模式（唯讀）"}・資料同步於雲端
+          <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2, display: "flex", alignItems: "center", gap: 5 }}>
+            {tab !== null && TAB_META[tab]?.Icon && React.createElement(TAB_META[tab].Icon, { size: 14, color: COLORS.accent })}
+            {tab !== null
+              ? <span style={{ color: COLORS.ink, fontWeight: 700 }}>{TAB_META[tab]?.label}</span>
+              : (role === "owner" ? "主人模式" : "醫師模式（唯讀）")}
           </div>
         </div>
 
