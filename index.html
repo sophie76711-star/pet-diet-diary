@@ -281,11 +281,18 @@ function compressImage(file) {
 }
 
 const photoKey = (id) => `cat-diet-photo:${id}`;
+// Module-level (not component state) so it survives PhotoThumb unmounting/remounting —
+// e.g. switching tabs and coming back used to re-fetch every photo from Firestore from
+// scratch, and if that refetch was slow or hiccupped, the thumbnail just sat on "載入中"
+// forever with no way to tell it had actually failed. Caching means a photo that already
+// loaded once stays visible instantly, no matter how many times you navigate away and back.
+const photoCache = new Map();
 
 async function savePhoto(dataUrl) {
   const id = uid();
   try {
     await window.storage.set(photoKey(id), dataUrl, true);
+    photoCache.set(id, dataUrl);
     return id;
   } catch (e) {
     console.error("photo save failed", e);
@@ -293,33 +300,53 @@ async function savePhoto(dataUrl) {
   }
 }
 async function loadPhoto(id) {
+  if (photoCache.has(id)) return photoCache.get(id);
   try {
     const res = await window.storage.get(photoKey(id), true);
-    return res ? res.value : null;
+    const val = res ? res.value : null;
+    if (val) photoCache.set(id, val);
+    return val;
   } catch (e) {
-    return null;
+    return null; // covers "not found" as well as a real read failure — PhotoThumb treats both as retry-able
   }
 }
 async function deletePhoto(id) {
+  photoCache.delete(id);
   try { await window.storage.delete(photoKey(id), true); } catch (e) { /* already gone */ }
 }
 
 // Thumbnail that loads its image on demand, and opens full-screen when tapped
 function PhotoThumb({ id, onRemove, size = 72 }) {
-  const [src, setSrc] = useState(null);
+  const [src, setSrc] = useState(() => photoCache.get(id) || null);
+  const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
-  useEffect(() => { let alive = true; loadPhoto(id).then((v) => { if (alive) setSrc(v); }); return () => { alive = false; }; }, [id]);
+  const [retryTick, setRetryTick] = useState(0);
+  useEffect(() => {
+    const cached = photoCache.get(id);
+    if (cached) { setSrc(cached); setFailed(false); return; }
+    let alive = true;
+    setFailed(false);
+    loadPhoto(id).then((v) => {
+      if (!alive) return;
+      if (v) setSrc(v); else setFailed(true);
+    });
+    return () => { alive = false; };
+  }, [id, retryTick]);
 
   return (
     <>
       <div style={{ position: "relative", flexShrink: 0 }}>
-        <button onClick={() => src && setOpen(true)} style={{
-          width: size, height: size, borderRadius: 10, overflow: "hidden", padding: 0,
-          border: `1px solid ${COLORS.line}`, background: "#F1EFEA", cursor: src ? "zoom-in" : "default",
-        }}>
+        <button
+          onClick={() => (src ? setOpen(true) : failed && setRetryTick((t) => t + 1))}
+          style={{
+            width: size, height: size, borderRadius: 10, overflow: "hidden", padding: 0,
+            border: `1px solid ${COLORS.line}`, background: "#F1EFEA", cursor: src ? "zoom-in" : failed ? "pointer" : "default",
+          }}>
           {src
             ? <img src={src} alt="紀錄照片" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-            : <span style={{ fontSize: 10, color: COLORS.inkSoft }}>載入中</span>}
+            : failed
+              ? <span style={{ fontSize: 10, color: COLORS.danger, padding: 4, textAlign: "center" }}>載入失敗<br />點一下重試</span>
+              : <span style={{ fontSize: 10, color: COLORS.inkSoft }}>載入中</span>}
         </button>
         {onRemove && (
           <button onClick={() => onRemove(id)} aria-label="移除這張照片" style={{
