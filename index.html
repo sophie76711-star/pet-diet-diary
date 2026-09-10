@@ -165,6 +165,7 @@ const KEY_RECORDS = "cat-diet-records";
 const KEY_PIN = "cat-diet-owner-pin";
 const productsKey = (petId) => `${KEY_PRODUCTS}:${petId}`;
 const recordsKey = (petId) => `${KEY_RECORDS}:${petId}`;
+const vetViewedKey = (petId) => `cat-diet-vet-viewed:${petId}`;
 
 async function loadKey(key) {
   try {
@@ -196,6 +197,32 @@ async function savePin(pin) {
 }
 async function clearPin() {
   try { await window.storage.delete(KEY_PIN, true); return true; } catch (e) { return false; }
+}
+// Records when someone taps into 醫師模式 for a given pet, so the owner has some signal
+// that the link was opened. Not tied to any verified identity (no vet login exists) — it
+// just means "someone opened the shared link and picked vet mode."
+async function loadVetViewed(petId) {
+  try {
+    const res = await window.storage.get(vetViewedKey(petId), true);
+    return res ? res.value : "";
+  } catch (e) { return ""; }
+}
+async function saveVetViewed(petId) {
+  try { await window.storage.set(vetViewedKey(petId), new Date().toISOString(), true); return true; } catch (e) { return false; }
+}
+function formatRelativeTime(iso) {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const min = Math.floor((Date.now() - then) / 60000);
+  if (min < 1) return "剛剛";
+  if (min < 60) return `${min} 分鐘前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} 小時前`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day} 天前`;
+  const d = new Date(iso);
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 // Loads the pet list, creating a default pet (and moving any pre-multi-pet data into it) on first run
@@ -2550,6 +2577,7 @@ function App() {
   const [pinSettingsOpen, setPinSettingsOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null); // { message, onYes } — replaces window.confirm, which the sandbox can silently block
   const [petModal, setPetModal] = useState(null); // { mode:'add'|'edit', pet }
+  const [vetViewedAt, setVetViewedAt] = useState(""); // ISO timestamp string, "" = never (for this pet)
 
   useEffect(() => {
     (async () => { setOwnerPin(await loadPin()); })();
@@ -2575,6 +2603,19 @@ function App() {
     })();
     return () => { cancelled = true; };
   }, [petId]);
+
+  // Load the "vet last viewed" timestamp whenever the selected pet changes, so the owner
+  // can see it on the hub. Separately, if *this* session just entered vet mode, log a
+  // fresh timestamp — see loadVetViewed/saveVetViewed for what this can and can't prove.
+  useEffect(() => {
+    if (!petId) { setVetViewedAt(""); return; }
+    (async () => { setVetViewedAt(await loadVetViewed(petId)); })();
+  }, [petId]);
+  useEffect(() => {
+    if (role === "vet" && petId) {
+      saveVetViewed(petId).then(() => setVetViewedAt(new Date().toISOString()));
+    }
+  }, [role, petId]);
 
   const persistPets = useCallback(async (next) => { setPets(next); await saveKey(KEY_PETS, next); }, []);
   const persistRecords = useCallback(async (next) => { setRecords(next); if (petId) await saveKey(recordsKey(petId), next); }, [petId]);
@@ -2812,6 +2853,11 @@ function App() {
               ? <span style={{ color: COLORS.ink, fontWeight: 700 }}>{TAB_META[tab]?.label}</span>
               : (role === "owner" ? "主人模式" : "醫師模式（唯讀）")}
           </div>
+          {role === "owner" && (
+            <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 2 }}>
+              {vetViewedAt ? `醫師最後查看：${formatRelativeTime(vetViewedAt)}` : "醫師尚未查看過"}
+            </div>
+          )}
         </div>
 
         {loading || petLoading ? (
