@@ -181,12 +181,18 @@ const vetViewedKey = (petId) => `cat-diet-vet-viewed:${petId}`;
 const medPresetsKey = (petId) => `cat-diet-med-presets:${petId}`;
 const medLogsKey = (petId) => `cat-diet-med-logs:${petId}`;
 
+// Reads a key. Returns [] when the key genuinely doesn't exist yet, but THROWS when the
+// read itself fails (offline, quota, permissions). Callers must not treat a thrown error
+// as "no data" — doing so previously caused a failed read to look like a first run and
+// silently overwrite existing data with defaults.
 async function loadKey(key) {
+  const res = await window.storage.get(key, true);
+  if (!res) return [];
   try {
-    const res = await window.storage.get(key, true);
-    return res ? JSON.parse(res.value) : [];
+    const parsed = JSON.parse(res.value);
+    return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
-    return [];
+    return []; // stored value is corrupt, not a read failure
   }
 }
 async function saveKey(key, data) {
@@ -239,7 +245,9 @@ function formatRelativeTime(iso) {
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-// Loads the pet list, creating a default pet (and moving any pre-multi-pet data into it) on first run
+// Loads the pet list, creating a default pet (and moving any pre-multi-pet data into it) on
+// first run. loadKey throws if the read fails, so this only reaches the "create default"
+// branch when the list is confirmed empty — never because the network hiccuped.
 async function loadPetsWithMigration() {
   let pets = await loadKey(KEY_PETS);
   if (Array.isArray(pets) && pets.length > 0) return pets;
@@ -709,10 +717,23 @@ function MedicationsScreen({ medPresets, medLogs, role, onAddPreset, onRemovePre
   );
 }
 
+// Picks the sensible default food for a given date: the one actually in use then
+// (startDate reached, not yet ended). products[0] used to win, which is the oldest food
+// ever added — so a new record kept defaulting to a feed that was long since replaced.
+// Falls back to the most recently started product if the date matches no active period.
+function defaultProductForDate(products, date) {
+  if (!products.length) return "";
+  const byNewest = [...products].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+  const active = byNewest.find((p) => (!p.startDate || p.startDate <= date) && (!p.endDate || p.endDate >= date));
+  return (active || byNewest[0]).id;
+}
+
 // ---------- Record Form (used for add / edit) ----------
 function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [date, setDate] = useState(initial?.date || todayStr());
-  const [productId, setProductId] = useState(initial?.productId || (products[0]?.id ?? ""));
+  const [productId, setProductId] = useState(initial?.productId || defaultProductForDate(products, initial?.date || todayStr()));
+  // Once the food is picked by hand, changing the date must not silently re-pick it.
+  const productTouched = useRef(!!initial?.productId);
   const [breakfast, setBreakfast] = useState(initial?.breakfast ?? 0);
   const [dinner, setDinner] = useState(initial?.dinner ?? 0);
   const [bedtime, setBedtime] = useState(initial?.bedtime ?? 0);
@@ -731,6 +752,14 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
   const [mDose, setMDose] = useState("");
   const [mNote, setMNote] = useState("");
   const [mSave, setMSave] = useState(false);
+
+  // Keep the default food in step with the date while it's still the default — so
+  // backfilling an older day picks whatever was being fed then, not today's food.
+  useEffect(() => {
+    if (productTouched.current) return;
+    const next = defaultProductForDate(products, date);
+    if (next && next !== productId) setProductId(next);
+  }, [date, products]); // eslint-disable-line
 
   const total = (Number(breakfast) || 0) + (Number(dinner) || 0) + (Number(bedtime) || 0);
 
@@ -804,7 +833,7 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
       <Field label="食用產品">
         <select value={productId} onChange={(e) => {
           if (e.target.value === "__new__") { setAddingProduct(true); }
-          else { setProductId(e.target.value); }
+          else { productTouched.current = true; setProductId(e.target.value); }
         }} style={inputStyle}>
           {products.length === 0 && <option value="">尚無產品</option>}
           {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -816,6 +845,7 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
             <Btn size="sm" onClick={() => {
               if (!newProductName.trim()) return;
               const prod = onQuickAddProduct(newProductName, date);
+              productTouched.current = true;
               setProductId(prod.id);
               setNewProductName("");
               setAddingProduct(false);
@@ -2951,14 +2981,24 @@ function App() {
   const [vetViewedAt, setVetViewedAt] = useState(""); // ISO timestamp string, "" = never (for this pet)
   const [medPresetsOpen, setMedPresetsOpen] = useState(false);
 
+  const [loadError, setLoadError] = useState("");
+
   useEffect(() => {
     (async () => { setOwnerPin(await loadPin()); })();
   }, []);
 
   useEffect(() => {
     (async () => {
-      const list = await loadPetsWithMigration();
-      setPets(list);
+      try {
+        const list = await loadPetsWithMigration();
+        setPets(list);
+        setLoadError("");
+      } catch (e) {
+        console.error("pet list load failed", e);
+        // Surface the failure instead of falling through with an empty list — an empty
+        // list here would look like "no pets" and invite writes that overwrite real data.
+        setLoadError("資料載入失敗，可能是網路不穩。請重新整理再試一次。");
+      }
       setLoading(false);
     })();
   }, []);
@@ -2970,11 +3010,19 @@ function App() {
     let cancelled = false;
     setPetLoading(true);
     (async () => {
-      const [p, r, mp, ml] = await Promise.all([
-        loadKey(productsKey(petId)), loadKey(recordsKey(petId)),
-        loadKey(medPresetsKey(petId)), loadKey(medLogsKey(petId)),
-      ]);
-      if (!cancelled) { setProducts(p); setRecords(r); setMedPresets(mp); setMedLogs(ml); setPetLoading(false); }
+      try {
+        const [p, r, mp, ml] = await Promise.all([
+          loadKey(productsKey(petId)), loadKey(recordsKey(petId)),
+          loadKey(medPresetsKey(petId)), loadKey(medLogsKey(petId)),
+        ]);
+        if (!cancelled) { setProducts(p); setRecords(r); setMedPresets(mp); setMedLogs(ml); setLoadError(""); }
+      } catch (e) {
+        console.error("pet data load failed", e);
+        // Leave whatever is already in state alone; blanking it would make the UI look
+        // empty and any subsequent save would persist that emptiness over good data.
+        if (!cancelled) setLoadError("這隻寵物的資料載入失敗，請重新整理再試一次。先不要新增或修改，以免覆蓋原本的紀錄。");
+      }
+      if (!cancelled) setPetLoading(false);
     })();
     return () => { cancelled = true; };
   }, [petId]);
@@ -3270,6 +3318,16 @@ function App() {
           )}
         </div>
 
+        {loadError && (
+          <div style={{
+            background: COLORS.dangerSoft, border: `1px solid ${COLORS.danger}44`,
+            borderRadius: 12, padding: "12px 14px", marginBottom: 14,
+            fontSize: 13, color: COLORS.danger, fontWeight: 600,
+          }}>
+            {loadError}
+          </div>
+        )}
+
         {loading || petLoading ? (
           <div style={{ textAlign: "center", padding: 40, color: COLORS.inkSoft }}>載入中…</div>
         ) : tab === null ? (
@@ -3487,7 +3545,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
       window.storage = {
         get: async function (key) {
           var snap = await kv.doc(key).get();
-          if (!snap.exists) throw new Error("key not found: " + key);
+          // Return null for "no such document" instead of throwing, so callers can tell a
+          // genuinely-absent key apart from a read that failed (network/quota). Conflating
+          // the two is what let a failed read masquerade as "first run" and overwrite the
+          // pet list with a fresh default. Real failures still throw.
+          if (!snap.exists) return null;
           return { key: key, value: snap.data().value, shared: true };
         },
         set: async function (key, value) {
