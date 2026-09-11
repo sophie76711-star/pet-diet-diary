@@ -52,6 +52,7 @@ const Maximize2 = mkIcon(<><path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d=
 const ZoomIn = mkIcon(<><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M11 8v6" /><path d="M8 11h6" /></>);
 const ZoomOut = mkIcon(<><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M8 11h6" /></>);
 const MessageSquare = mkIcon(<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />);
+const Pill = mkIcon(<><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z" /><path d="m8.5 8.5 7 7" /></>);
 
 // ---------- theme ----------
 const COLORS = {
@@ -637,8 +638,74 @@ function MedPresetManager({ medPresets, onAdd, onRemove, onClose }) {
   );
 }
 
+// Full-screen version of medication management: the reusable "常用藥" list, plus a
+// chronological log of every dose actually given (across all days), so there's one place
+// to review the whole regimen instead of only ever seeing one day at a time.
+function MedicationsScreen({ medPresets, medLogs, role, onAddPreset, onRemovePreset, onRemoveLog }) {
+  const [name, setName] = useState("");
+  const [dose, setDose] = useState("");
+  const sortedLogs = useMemo(() => [...medLogs].sort((a, b) => b.date.localeCompare(a.date)), [medLogs]);
+
+  const add = () => {
+    if (!name.trim()) return;
+    onAddPreset({ id: uid(), name: name.trim(), dose: dose.trim(), note: "" });
+    setName(""); setDose("");
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Card>
+        <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.ink, marginBottom: 10 }}>常用藥</div>
+        {medPresets.length === 0 ? (
+          <div style={{ fontSize: 13, color: COLORS.inkSoft, marginBottom: role === "owner" ? 12 : 0 }}>還沒有常用藥。</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: role === "owner" ? 14 : 0 }}>
+            {medPresets.map((p) => (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "#F1EFEA", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{p.name}{p.dose ? ` · ${p.dose}` : ""}</div>
+                {role === "owner" && onRemovePreset && (
+                  <button onClick={() => onRemovePreset(p.id)} aria-label="移除常用藥" style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft }}><X size={15} /></button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {role === "owner" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="藥名（必填）" style={inputStyle} />
+            <input value={dose} onChange={(e) => setDose(e.target.value)} placeholder="常用劑量（選填）" style={inputStyle} />
+            <Btn onClick={add} style={{ alignSelf: "flex-end" }}><Plus size={14} />新增常用藥</Btn>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.ink, marginBottom: 10 }}>用藥紀錄</div>
+        {sortedLogs.length === 0 ? (
+          <div style={{ fontSize: 13, color: COLORS.inkSoft }}>還沒有任何用藥紀錄。</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {sortedLogs.map((l) => (
+              <div key={l.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "#F1EFEA", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: COLORS.inkSoft }}>{l.date}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink }}>{l.name}{l.dose ? ` · ${l.dose}` : ""}</div>
+                  {l.note && <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 1 }}>{l.note}</div>}
+                </div>
+                {role === "owner" && onRemoveLog && (
+                  <button onClick={() => onRemoveLog(l.id)} aria-label="移除這筆用藥紀錄" style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, flexShrink: 0 }}><X size={14} /></button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ---------- Record Form (used for add / edit) ----------
-function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions }) {
+function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [date, setDate] = useState(initial?.date || todayStr());
   const [productId, setProductId] = useState(initial?.productId || (products[0]?.id ?? ""));
   const [breakfast, setBreakfast] = useState(initial?.breakfast ?? 0);
@@ -654,6 +721,11 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
   const [error, setError] = useState("");
   const [addingProduct, setAddingProduct] = useState(false);
   const [newProductName, setNewProductName] = useState("");
+  const [medManualOpen, setMedManualOpen] = useState(false);
+  const [mName, setMName] = useState("");
+  const [mDose, setMDose] = useState("");
+  const [mNote, setMNote] = useState("");
+  const [mSave, setMSave] = useState(false);
 
   const total = (Number(breakfast) || 0) + (Number(dinner) || 0) + (Number(bedtime) || 0);
 
@@ -798,6 +870,78 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
         <textarea value={other} onChange={(e) => setOther(e.target.value)} rows={5}
           style={{ ...inputStyle, resize: "vertical", minHeight: 140 }} placeholder="今天的觀察、餵食方式、偷吃了什麼..." />
       </Field>
+
+      {onSetDayMeds && (() => {
+        const dayLogs = medLogs.filter((l) => l.date === date);
+        const manualLogs = dayLogs.filter((l) => l.presetId == null);
+        const selectedIds = medPresets.filter((p) => dayLogs.some((l) => l.presetId === p.id)).map((p) => p.id);
+        return (
+          <Field label="用藥">
+            {medPresets.length > 0 ? (
+              <select multiple value={selectedIds}
+                onChange={(e) => onSetDayMeds(date, Array.from(e.target.selectedOptions).map((o) => o.value))}
+                size={Math.min(6, medPresets.length)}
+                style={{ ...inputStyle, padding: 0 }}
+              >
+                {medPresets.map((p) => (
+                  <option key={p.id} value={p.id} style={{ padding: "8px 10px" }}>
+                    {p.name}{p.dose ? ` · ${p.dose}` : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div style={{ fontSize: 12, color: COLORS.inkSoft }}>還沒有常用藥，可以先到「用藥清單」新增，之後就能在這裡直接選。</div>
+            )}
+            {onManageMedPresets && (
+              <button type="button" onClick={onManageMedPresets} style={{ marginTop: 6, background: "none", border: "none", cursor: "pointer", color: COLORS.accent, fontSize: 12, fontWeight: 600, padding: 0 }}>
+                管理常用藥
+              </button>
+            )}
+
+            {manualLogs.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                {manualLogs.map((l) => (
+                  <div key={l.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "#F1EFEA", borderRadius: 8, padding: "6px 10px" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink }}>{l.name}{l.dose ? ` · ${l.dose}` : ""}</div>
+                      {l.note && <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 1 }}>{l.note}</div>}
+                    </div>
+                    {onRemoveMedLog && (
+                      <button type="button" onClick={() => onRemoveMedLog(l.id)} aria-label="移除這筆用藥紀錄" style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, flexShrink: 0 }}><X size={14} /></button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {onAddManualMed && (
+              medManualOpen ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: 10, marginTop: 8 }}>
+                  <input value={mName} onChange={(e) => setMName(e.target.value)} placeholder="藥名（必填）" style={inputStyle} />
+                  <input value={mDose} onChange={(e) => setMDose(e.target.value)} placeholder="劑量／份量（選填，例：半顆、5mg）" style={inputStyle} />
+                  <input value={mNote} onChange={(e) => setMNote(e.target.value)} placeholder="備註（選填）" style={inputStyle} />
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.inkSoft, cursor: "pointer" }}>
+                    <input type="checkbox" checked={mSave} onChange={(e) => setMSave(e.target.checked)} />
+                    加入常用藥，之後可以直接選
+                  </label>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <Btn variant="ghost" onClick={() => setMedManualOpen(false)}>取消</Btn>
+                    <Btn onClick={() => {
+                      if (!mName.trim()) return;
+                      onAddManualMed(date, { name: mName.trim(), dose: mDose.trim(), note: mNote.trim(), saveAsPreset: mSave });
+                      setMName(""); setMDose(""); setMNote(""); setMSave(false); setMedManualOpen(false);
+                    }}><Check size={14} />新增</Btn>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setMedManualOpen(true)} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: COLORS.accent, fontSize: 12, fontWeight: 700, marginTop: 8, padding: 0 }}>
+                  <Plus size={13} />手動輸入這次的藥
+                </button>
+              )
+            )}
+          </Field>
+        );
+      })()}
 
       <Field label="照片（嘔吐物、便便等，可不加）">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -980,7 +1124,7 @@ function dayRating(record, product) {
 }
 
 // ---------- Day Detail (read view, used by vet + as base for owner edit) ----------
-function DayDetail({ record, product, products = [] }) {
+function DayDetail({ record, product, products = [], medLogs = [] }) {
   const total = record.breakfast + record.dinner + record.bedtime;
   const ti = targetInfo(record, products.length ? products : (product ? [product] : []));
   const day = dayRating(record, product);
@@ -1089,6 +1233,28 @@ function DayDetail({ record, product, products = [] }) {
         </div>
       )}
 
+      {(() => {
+        const dayMeds = medLogs.filter((l) => l.date === record.date);
+        if (dayMeds.length === 0) return null;
+        return (
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.inkSoft, marginBottom: 6 }}>用藥</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {dayMeds.map((l) => (
+                <div key={l.id} style={{
+                  display: "flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 999,
+                  border: `1px solid ${COLORS.accent}`, background: COLORS.accentSoft,
+                  color: COLORS.accent, fontSize: 12, fontWeight: 600,
+                }}>
+                  <Check size={12} strokeWidth={3} />
+                  {l.name}{l.dose ? ` · ${l.dose}` : ""}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       <details>
         <summary style={{
           cursor: "pointer", fontSize: 12, color: COLORS.accent, fontWeight: 600,
@@ -1132,7 +1298,7 @@ function targetInfo(record, products) {
 }
 
 // ---------- Day panel: view first, edit only after tapping 修改 ----------
-function DayPanelBody({ record, product, role, products, existingDates, onSave, onDelete, onOpenInHistory, onQuickAddProduct, onPrevDay, onNextDay, prevDate, nextDate, medPresets = [], medLogs = [], onTogglePreset, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function DayPanelBody({ record, product, role, products, existingDates, onSave, onDelete, onOpenInHistory, onQuickAddProduct, onPrevDay, onNextDay, prevDate, nextDate, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [editing, setEditing] = useState(false);
   const touch = useRef(null);
   if (!record) return null;
@@ -1162,6 +1328,9 @@ function DayPanelBody({ record, product, role, products, existingDates, onSave, 
         onCancel={() => setEditing(false)}
         onDelete={(id) => onDelete && onDelete(id)}
         onQuickAddProduct={onQuickAddProduct}
+        medPresets={medPresets} medLogs={medLogs}
+        onSetDayMeds={onSetDayMeds} onAddManualMed={onAddManualMed}
+        onRemoveMedLog={onRemoveMedLog} onManageMedPresets={onManageMedPresets}
       />
     );
   }
@@ -1206,24 +1375,7 @@ function DayPanelBody({ record, product, role, products, existingDates, onSave, 
         );
       })()}
 
-      <DayDetail record={record} product={product} products={products} />
-      {(role === "owner" || medLogs.some((l) => l.date === record.date)) && (
-        <div style={{
-          marginTop: 14, padding: 12, borderRadius: 14,
-          border: `1px solid ${COLORS.line}`, background: "#fff",
-        }}>
-          <MedSection
-            date={record.date}
-            medPresets={medPresets}
-            medLogs={medLogs}
-            role={role}
-            onTogglePreset={onTogglePreset ? (preset) => onTogglePreset(record.date, preset) : undefined}
-            onAddManual={onAddManualMed ? (entry) => onAddManualMed(record.date, entry) : undefined}
-            onRemoveLog={onRemoveMedLog}
-            onManagePresets={role === "owner" ? onManageMedPresets : undefined}
-          />
-        </div>
-      )}
+      <DayDetail record={record} product={product} products={products} medLogs={medLogs} />
       {role === "owner" && (
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           <Btn onClick={() => setEditing(true)}><Pencil size={14} />修改</Btn>
@@ -1448,7 +1600,7 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
 const ZOOM_MIN = 7;
 const ZOOM_STEP = 5;
 
-function ExpandedChartView({ chartData, bands, products, role, existingDates, onSaveRecord, onDeleteRecord, metric, initialDate, onOpenInHistory, onQuickAddProduct, onClose, medPresets, medLogs, onTogglePreset, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function ExpandedChartView({ chartData, bands, products, role, existingDates, onSaveRecord, onDeleteRecord, metric, initialDate, onOpenInHistory, onQuickAddProduct, onClose, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const meta = CHART_META[metric] || CHART_META.health;
   const total = chartData.length;
   const initialIndex = initialDate ? chartData.findIndex((d) => d.date === initialDate) : -1;
@@ -1592,7 +1744,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
               onOpenInHistory={onOpenInHistory}
               onQuickAddProduct={onQuickAddProduct}
               medPresets={medPresets} medLogs={medLogs}
-              onTogglePreset={onTogglePreset} onAddManualMed={onAddManualMed}
+              onSetDayMeds={onSetDayMeds} onAddManualMed={onAddManualMed}
               onRemoveMedLog={onRemoveMedLog} onManageMedPresets={onManageMedPresets}
             />
           </Card>
@@ -1671,7 +1823,7 @@ function ProductIssueSummary({ records, products }) {
 }
 
 // ---------- Dashboard ----------
-function Dashboard({ records, products, role, existingDates, onSaveRecord, onDeleteRecord, onOpenInHistory, onQuickAddProduct, medPresets, medLogs, onTogglePreset, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function Dashboard({ records, products, role, existingDates, onSaveRecord, onDeleteRecord, onOpenInHistory, onQuickAddProduct, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [expanded, setExpanded] = useState(null); // { metric, date } | null
 
   const chartData = useMemo(() => {
@@ -1760,7 +1912,7 @@ function Dashboard({ records, products, role, existingDates, onSaveRecord, onDel
           onQuickAddProduct={onQuickAddProduct}
           onClose={() => setExpanded(null)}
           medPresets={medPresets} medLogs={medLogs}
-          onTogglePreset={onTogglePreset} onAddManualMed={onAddManualMed}
+          onSetDayMeds={onSetDayMeds} onAddManualMed={onAddManualMed}
           onRemoveMedLog={onRemoveMedLog} onManageMedPresets={onManageMedPresets}
         />
       )}
@@ -1858,7 +2010,7 @@ function RecordRow({ r, onSelect, selectMode, selected, onToggleSelect }) {
 // ---------- Calendar month view ----------
 // A month grid reads far faster than a scrolling list: each day is one small tile, and its
 // colour says how the day went, so a whole month is one glance instead of 30 cards.
-function CalendarView({ records, products, onSelect, monthOffset, onShiftMonth }) {
+function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, onShiftMonth }) {
   const byDate = useMemo(() => {
     const m = new Map();
     records.forEach((r) => m.set(r.date, { ...r, _flags: flagsForRecord(r) }));
@@ -1919,7 +2071,7 @@ function CalendarView({ records, products, onSelect, monthOffset, onShiftMonth }
           fontSize: 12, color: COLORS.accent, fontWeight: 600,
         }}>
           <JournalIcon size={14} color={COLORS.accent} />
-          點日期即可查看當天完整紀錄，進去後可左右滑動翻閱前後幾天
+          {onCreateDate ? "點日期即可查看當天完整紀錄；沒紀錄的日期點下去可以直接新增" : "點日期即可查看當天完整紀錄，進去後可左右滑動翻閱前後幾天"}
         </div>
       )}
 
@@ -1938,15 +2090,16 @@ function CalendarView({ records, products, onSelect, monthOffset, onShiftMonth }
           return (
             <button
               key={d}
-              onClick={() => r && onSelect(r.date)}
-              disabled={!r}
+              onClick={() => (r ? onSelect(r.date) : onCreateDate && onCreateDate(iso(d)))}
+              disabled={!r && !onCreateDate}
+              aria-label={r ? `查看 ${iso(d)} 的紀錄` : onCreateDate ? `新增 ${iso(d)} 的紀錄` : undefined}
               style={{
                 aspectRatio: "1 / 1", borderRadius: 12, padding: 2,
                 // Tile tint = which food that day; red outline = abnormal. The two are separate
                 // channels so you can see feed changes and problem days at the same time.
-                border: `1.5px solid ${flagged ? COLORS.danger : r ? swatch(prodOf(r)?.color).border + "66" : "transparent"}`,
-                background: flagged ? COLORS.dangerSoft : r ? swatch(prodOf(r)?.color).bg : "transparent",
-                cursor: r ? "pointer" : "default",
+                border: `1.5px solid ${flagged ? COLORS.danger : r ? swatch(prodOf(r)?.color).border + "66" : onCreateDate ? COLORS.line : "transparent"}`,
+                background: flagged ? COLORS.dangerSoft : r ? swatch(prodOf(r)?.color).bg : onCreateDate ? "#FAFAF7" : "transparent",
+                cursor: r || onCreateDate ? "pointer" : "default",
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1,
               }}
             >
@@ -2007,13 +2160,14 @@ function CalendarView({ records, products, onSelect, monthOffset, onShiftMonth }
   );
 }
 
-function History({ records, products, onSelect, onDeleteMany, onConfirm, role, existingDates, onAddRecord, onQuickAddProduct, onAddProduct, onEditProduct, onLoadSample }) {
+function History({ records, products, onSelect, onDeleteMany, onConfirm, role, existingDates, onAddRecord, onQuickAddProduct, onAddProduct, onEditProduct, onLoadSample, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [search, setSearch] = useState("");
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [manualOpen, setManualOpen] = useState({}); // productId -> explicit true/false, overrides the default
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [addOpen, setAddOpen] = useState(false);
+  const [addDate, setAddDate] = useState(null); // pre-fill when opened by tapping an empty calendar day
   const [addActions, setAddActions] = useState(null); // action row lifted out of the form so the Modal can pin it
   const [view, setView] = useState("calendar"); // 'calendar' | 'list'
   const [monthOffset, setMonthOffset] = useState(0);
@@ -2150,6 +2304,7 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
       {view === "calendar" && records.length > 0 && (
         <CalendarView
           records={records} products={products} onSelect={onSelect}
+          onCreateDate={role === "owner" ? (date) => { setAddDate(date); setAddOpen(true); } : undefined}
           monthOffset={monthOffset} onShiftMonth={(d) => setMonthOffset((m) => Math.min(0, m + d))}
         />
       )}
@@ -2239,14 +2394,18 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
       )}
 
       {addOpen && (
-        <Modal title="新增紀錄" onClose={() => setAddOpen(false)} footer={addActions}>
+        <Modal title="新增紀錄" onClose={() => { setAddOpen(false); setAddDate(null); }} footer={addActions}>
           <RecordForm
+            initial={addDate ? { date: addDate } : undefined}
             products={products}
             existingDates={existingDates}
-            onSave={(rec) => { onAddRecord(rec); setAddOpen(false); }}
-            onCancel={() => setAddOpen(false)}
+            onSave={(rec) => { onAddRecord(rec); setAddOpen(false); setAddDate(null); }}
+            onCancel={() => { setAddOpen(false); setAddDate(null); }}
             onQuickAddProduct={onQuickAddProduct}
             renderActions={setAddActions}
+            medPresets={medPresets} medLogs={medLogs}
+            onSetDayMeds={onSetDayMeds} onAddManualMed={onAddManualMed}
+            onRemoveMedLog={onRemoveMedLog} onManageMedPresets={onManageMedPresets}
           />
         </Modal>
       )}
@@ -2845,6 +3004,19 @@ function App() {
     if (saveAsPreset) persistMedPresets([...medPresets, { id: uid(), name, dose: dose || "", note: note || "" }]);
   };
   const removeMedLog = (id) => persistMedLogs(medLogs.filter((l) => l.id !== id));
+  // Multi-select "which presets applied today" from one dropdown — computes the whole
+  // diff and writes once. (Calling toggleMedPreset in a loop for each change would race:
+  // every call in the same synchronous handler reads the same stale medLogs snapshot, so
+  // only the last toggle in the batch would actually stick.)
+  const setDayMedPresets = (date, presetIds) => {
+    const idSet = new Set(presetIds);
+    const keep = medLogs.filter((l) => l.date !== date || l.presetId == null || idSet.has(l.presetId));
+    const already = new Set(keep.filter((l) => l.date === date && l.presetId != null).map((l) => l.presetId));
+    const toAdd = medPresets
+      .filter((p) => idSet.has(p.id) && !already.has(p.id))
+      .map((p) => ({ id: uid(), date, presetId: p.id, name: p.name, dose: p.dose || "", note: p.note || "" }));
+    persistMedLogs([...keep, ...toAdd]);
+  };
 
 
   const currentPet = pets.find((p) => p.id === petId) || null;
@@ -2930,12 +3102,13 @@ function App() {
     dashboard: { label: "趨勢總覽", Icon: HeartIcon, desc: "圖表與健康趨勢", bg: COLORS.accentSoft },
     history: { label: "飲食日記", Icon: JournalIcon, desc: "新增紀錄、管理產品", bg: COLORS.blueSoft },
     export: { label: "匯出", Icon: Download, desc: "匯出 Excel／複製表格", bg: "#F3DEE0" },
+    meds: { label: "用藥清單", Icon: Pill, desc: "常用藥、用藥紀錄", bg: "#DDEBD8" },
   };
   const tabs = role === "owner"
-    ? [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"]]
-    : [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"]];
+    ? [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["meds", "用藥清單"]]
+    : [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["meds", "用藥清單"]];
 
-  useEffect(() => { if (role === "vet" && tab && !["dashboard", "history", "export"].includes(tab)) setTab(null); }, [role]); // eslint-disable-line
+  useEffect(() => { if (role === "vet" && tab && !["dashboard", "history", "export", "meds"].includes(tab)) setTab(null); }, [role]); // eslint-disable-line
 
   if (screen === "landing") {
     return (
@@ -3142,7 +3315,7 @@ function App() {
                 onSaveRecord={saveRecord} onDeleteRecord={deleteRecord}
                 onOpenInHistory={openInHistory} onQuickAddProduct={quickAddProduct}
                 medPresets={medPresets} medLogs={medLogs}
-                onTogglePreset={toggleMedPreset} onAddManualMed={addManualMedLog}
+                onSetDayMeds={setDayMedPresets} onAddManualMed={addManualMedLog}
                 onRemoveMedLog={removeMedLog}
                 onManageMedPresets={role === "owner" ? () => setMedPresetsOpen(true) : undefined}
               />
@@ -3157,9 +3330,21 @@ function App() {
                 onAddProduct={role === "owner" ? () => setModal({ type: "addProduct" }) : undefined}
                 onEditProduct={role === "owner" ? (p) => setModal({ type: "editProduct", payload: p }) : undefined}
                 onLoadSample={role === "owner" ? loadSampleData : undefined}
+                medPresets={medPresets} medLogs={medLogs}
+                onSetDayMeds={setDayMedPresets} onAddManualMed={addManualMedLog}
+                onRemoveMedLog={removeMedLog}
+                onManageMedPresets={role === "owner" ? () => setMedPresetsOpen(true) : undefined}
               />
             )}
             {tab === "export" && <ExportPanel records={records} products={products} petName={currentPet?.name} />}
+            {tab === "meds" && (
+              <MedicationsScreen
+                medPresets={medPresets} medLogs={medLogs} role={role}
+                onAddPreset={(preset) => persistMedPresets([...medPresets, preset])}
+                onRemovePreset={(id) => persistMedPresets(medPresets.filter((p) => p.id !== id))}
+                onRemoveLog={removeMedLog}
+              />
+            )}
           </div>
         )}
       </div>
@@ -3196,7 +3381,7 @@ function App() {
               prevDate={idx > 0 ? ordered[idx - 1].date : null}
               nextDate={idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1].date : null}
               medPresets={medPresets} medLogs={medLogs}
-              onTogglePreset={toggleMedPreset} onAddManualMed={addManualMedLog}
+              onSetDayMeds={setDayMedPresets} onAddManualMed={addManualMedLog}
               onRemoveMedLog={removeMedLog}
               onManageMedPresets={role === "owner" ? () => setMedPresetsOpen(true) : undefined}
             />
