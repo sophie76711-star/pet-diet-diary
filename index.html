@@ -187,22 +187,61 @@ const medLogsKey = (petId) => `cat-diet-med-logs:${petId}`;
 // silently overwrite existing data with defaults.
 async function loadKey(key) {
   const res = await window.storage.get(key, true);
-  if (!res) return [];
-  try {
-    const parsed = JSON.parse(res.value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return []; // stored value is corrupt, not a read failure
+  let remote = [];
+  if (res) {
+    try {
+      const parsed = JSON.parse(res.value);
+      remote = Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      remote = []; // stored value is corrupt, not a read failure
+    }
   }
+  // If a previous save never made it to the server, the on-device backup holds data the
+  // server doesn't. Prefer it, and push it back up so the two match again.
+  const backup = readLocalBackup(key);
+  if (backup && backup.data.length > remote.length) {
+    console.warn("recovering unsaved data from local backup:", key);
+    saveKey(key, backup.data); // fire-and-forget; re-marks pending if it fails again
+    return backup.data;
+  }
+  return remote;
 }
-async function saveKey(key, data) {
+// Local mirror of every successful save. If the network write fails we keep the data here
+// so nothing typed is lost, and the next successful load can recover it. localStorage is
+// synchronous and on-device, so it survives a dead connection, a closed tab, and a reload.
+const BACKUP_PREFIX = "cat-diet-backup:";
+function writeLocalBackup(key, data) {
+  try { localStorage.setItem(BACKUP_PREFIX + key, JSON.stringify({ savedAt: Date.now(), data })); } catch (e) { /* quota/private mode */ }
+}
+function readLocalBackup(key) {
   try {
-    await window.storage.set(key, JSON.stringify(data), true);
-    return true;
-  } catch (e) {
-    console.error("storage save failed", e);
-    return false;
+    const raw = localStorage.getItem(BACKUP_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.data) ? parsed : null;
+  } catch (e) { return null; }
+}
+// Marks a key whose last write never reached the server, so the UI can warn about it.
+const pendingWrites = new Set();
+
+// Saves with a few retries — a single flaky request shouldn't lose a record. Always writes
+// the local backup FIRST, so the data is safe on-device even if every retry fails.
+// Returns true only if the data actually reached Firestore.
+async function saveKey(key, data, attempts = 3) {
+  writeLocalBackup(key, data);
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await window.storage.set(key, JSON.stringify(data), true);
+      pendingWrites.delete(key);
+      return true;
+    } catch (e) {
+      console.error(`storage save failed (attempt ${i + 1}/${attempts})`, e);
+      // Back off briefly before retrying: 400ms, then 1200ms.
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 400 * Math.pow(3, i)));
+    }
   }
+  pendingWrites.add(key);
+  return false;
 }
 async function loadPin() {
   try {
@@ -729,7 +768,7 @@ function defaultProductForDate(products, date) {
 }
 
 // ---------- Record Form (used for add / edit) ----------
-function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions, onDirtyChange, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [date, setDate] = useState(initial?.date || todayStr());
   const [productId, setProductId] = useState(initial?.productId || defaultProductForDate(products, initial?.date || todayStr()));
   // Once the food is picked by hand, changing the date must not silently re-pick it.
@@ -762,6 +801,28 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
   }, [date, products]); // eslint-disable-line
 
   const total = (Number(breakfast) || 0) + (Number(dinner) || 0) + (Number(bedtime) || 0);
+
+  // Track whether anything has actually been changed, so leaving only prompts when there's
+  // something to lose. Compared against the starting values rather than a "user typed"
+  // flag, so typing something and undoing it doesn't count as unsaved.
+  const base = {
+    date: initial?.date || todayStr(),
+    productId: initial?.productId || defaultProductForDate(products, initial?.date || todayStr()),
+    breakfast: initial?.breakfast ?? 0, dinner: initial?.dinner ?? 0, bedtime: initial?.bedtime ?? 0,
+    mental: initial?.mental ?? 3, stool: initial?.stool ?? 4, vomit: initial?.vomit ?? 0,
+    other: initial?.other || "", stress: initial?.stress || "", photos: initial?.photos || [],
+  };
+  const dirty =
+    date !== base.date || productId !== base.productId ||
+    Number(breakfast) !== Number(base.breakfast) || Number(dinner) !== Number(base.dinner) ||
+    Number(bedtime) !== Number(base.bedtime) || Number(mental) !== Number(base.mental) ||
+    Number(stool) !== Number(base.stool) || Number(vomit) !== Number(base.vomit) ||
+    other !== base.other || stress !== base.stress ||
+    photos.length !== base.photos.length || photos.some((p, i) => p !== base.photos[i]);
+
+  useEffect(() => { if (onDirtyChange) onDirtyChange(dirty); }, [dirty]); // eslint-disable-line
+  // Report "clean" on unmount so a stale dirty flag can't block the next screen.
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, []); // eslint-disable-line
 
   const handleSave = () => {
     if (!date) { setError("請選擇日期"); return; }
@@ -1335,8 +1396,15 @@ function targetInfo(record, products) {
 }
 
 // ---------- Day panel: view first, edit only after tapping 修改 ----------
-function DayPanelBody({ record, product, role, products, existingDates, onSave, onDelete, onOpenInHistory, onQuickAddProduct, onPrevDay, onNextDay, prevDate, nextDate, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function DayPanelBody({ record, product, role, products, existingDates, onSave, onDelete, onOpenInHistory, onQuickAddProduct, onPrevDay, onNextDay, prevDate, nextDate, onConfirm, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [editing, setEditing] = useState(false);
+  // Same unsaved-changes guard as the add form: only prompt if something was edited.
+  const editDirty = useRef(false);
+  const leaveEdit = () => { editDirty.current = false; setEditing(false); };
+  const cancelEditGuarded = () => {
+    if (!editDirty.current || !onConfirm) { leaveEdit(); return; }
+    onConfirm({ message: "修改還沒儲存，離開的話剛剛的變更會不見。確定要離開嗎？", onYes: leaveEdit });
+  };
   const touch = useRef(null);
   if (!record) return null;
 
@@ -1361,10 +1429,11 @@ function DayPanelBody({ record, product, role, products, existingDates, onSave, 
         initial={record}
         products={products}
         existingDates={existingDates}
-        onSave={(rec) => onSave(rec)}
-        onCancel={() => setEditing(false)}
+        onSave={(rec) => { editDirty.current = false; onSave(rec); }}
+        onCancel={cancelEditGuarded}
         onDelete={(id) => onDelete && onDelete(id)}
         onQuickAddProduct={onQuickAddProduct}
+        onDirtyChange={(d) => { editDirty.current = d; }}
         medPresets={medPresets} medLogs={medLogs}
         onSetDayMeds={onSetDayMeds} onAddManualMed={onAddManualMed}
         onRemoveMedLog={onRemoveMedLog} onManageMedPresets={onManageMedPresets}
@@ -1637,7 +1706,7 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
 const ZOOM_MIN = 7;
 const ZOOM_STEP = 5;
 
-function ExpandedChartView({ chartData, bands, products, role, existingDates, onSaveRecord, onDeleteRecord, metric, initialDate, onOpenInHistory, onQuickAddProduct, onClose, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function ExpandedChartView({ chartData, bands, products, role, existingDates, onSaveRecord, onDeleteRecord, metric, initialDate, onOpenInHistory, onQuickAddProduct, onClose, onConfirm, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const meta = CHART_META[metric] || CHART_META.health;
   const total = chartData.length;
   const initialIndex = initialDate ? chartData.findIndex((d) => d.date === initialDate) : -1;
@@ -1780,6 +1849,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
               onDelete={(id) => { onDeleteRecord(id); setSelectedDate(null); }}
               onOpenInHistory={onOpenInHistory}
               onQuickAddProduct={onQuickAddProduct}
+              onConfirm={onConfirm}
               medPresets={medPresets} medLogs={medLogs}
               onSetDayMeds={onSetDayMeds} onAddManualMed={onAddManualMed}
               onRemoveMedLog={onRemoveMedLog} onManageMedPresets={onManageMedPresets}
@@ -1860,7 +1930,7 @@ function ProductIssueSummary({ records, products }) {
 }
 
 // ---------- Dashboard ----------
-function Dashboard({ records, products, role, existingDates, onSaveRecord, onDeleteRecord, onOpenInHistory, onQuickAddProduct, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function Dashboard({ records, products, role, existingDates, onSaveRecord, onDeleteRecord, onOpenInHistory, onQuickAddProduct, onConfirm, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [expanded, setExpanded] = useState(null); // { metric, date } | null
 
   const chartData = useMemo(() => {
@@ -1948,6 +2018,7 @@ function Dashboard({ records, products, role, existingDates, onSaveRecord, onDel
           onOpenInHistory={onOpenInHistory ? (date) => { onOpenInHistory(date); setExpanded(null); } : null}
           onQuickAddProduct={onQuickAddProduct}
           onClose={() => setExpanded(null)}
+          onConfirm={onConfirm}
           medPresets={medPresets} medLogs={medLogs}
           onSetDayMeds={onSetDayMeds} onAddManualMed={onAddManualMed}
           onRemoveMedLog={onRemoveMedLog} onManageMedPresets={onManageMedPresets}
@@ -2205,6 +2276,14 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
   const [selected, setSelected] = useState(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [addDate, setAddDate] = useState(null); // pre-fill when opened by tapping an empty calendar day
+  // Leaving a half-filled form used to discard it without a word. Confirm first, but only
+  // when something was actually entered — an untouched form closes straight away.
+  const addDirty = useRef(false);
+  const closeAdd = () => { addDirty.current = false; setAddOpen(false); setAddDate(null); };
+  const closeAddGuarded = () => {
+    if (!addDirty.current) { closeAdd(); return; }
+    onConfirm({ message: "這筆紀錄還沒儲存，離開的話剛剛填的內容會不見。確定要離開嗎？", onYes: closeAdd });
+  };
   const [addActions, setAddActions] = useState(null); // action row lifted out of the form so the Modal can pin it
   const [view, setView] = useState("calendar"); // 'calendar' | 'list'
   const [monthOffset, setMonthOffset] = useState(0);
@@ -2431,15 +2510,16 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
       )}
 
       {addOpen && (
-        <Modal title="新增紀錄" onClose={() => { setAddOpen(false); setAddDate(null); }} footer={addActions}>
+        <Modal title="新增紀錄" onClose={closeAddGuarded} footer={addActions}>
           <RecordForm
             initial={addDate ? { date: addDate } : undefined}
             products={products}
             existingDates={existingDates}
-            onSave={(rec) => { onAddRecord(rec); setAddOpen(false); setAddDate(null); }}
-            onCancel={() => { setAddOpen(false); setAddDate(null); }}
+            onSave={(rec) => { onAddRecord(rec); addDirty.current = false; setAddOpen(false); setAddDate(null); }}
+            onCancel={closeAddGuarded}
             onQuickAddProduct={onQuickAddProduct}
             renderActions={setAddActions}
+            onDirtyChange={(d) => { addDirty.current = d; }}
             medPresets={medPresets} medLogs={medLogs}
             onSetDayMeds={onSetDayMeds} onAddManualMed={onAddManualMed}
             onRemoveMedLog={onRemoveMedLog} onManageMedPresets={onManageMedPresets}
@@ -2984,6 +3064,7 @@ function App() {
   const [medPresetsOpen, setMedPresetsOpen] = useState(false);
 
   const [loadError, setLoadError] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     (async () => { setOwnerPin(await loadPin()); })();
@@ -3042,11 +3123,16 @@ function App() {
     }
   }, [role, petId]);
 
-  const persistPets = useCallback(async (next) => { setPets(next); await saveKey(KEY_PETS, next); }, []);
-  const persistRecords = useCallback(async (next) => { setRecords(next); if (petId) await saveKey(recordsKey(petId), next); }, [petId]);
-  const persistProducts = useCallback(async (next) => { setProducts(next); if (petId) await saveKey(productsKey(petId), next); }, [petId]);
-  const persistMedPresets = useCallback(async (next) => { setMedPresets(next); if (petId) await saveKey(medPresetsKey(petId), next); }, [petId]);
-  const persistMedLogs = useCallback(async (next) => { setMedLogs(next); if (petId) await saveKey(medLogsKey(petId), next); }, [petId]);
+  // Every persist reports whether the write actually reached the server. A failed save used
+  // to be completely silent, so a record could look saved on screen and simply not exist.
+  const reportSave = useCallback((ok) => {
+    setSaveError(ok ? "" : "儲存失敗，資料已暫存在這台裝置上。請檢查網路後重新整理，系統會自動再試一次補上。");
+  }, []);
+  const persistPets = useCallback(async (next) => { setPets(next); reportSave(await saveKey(KEY_PETS, next)); }, [reportSave]);
+  const persistRecords = useCallback(async (next) => { setRecords(next); if (petId) reportSave(await saveKey(recordsKey(petId), next)); }, [petId, reportSave]);
+  const persistProducts = useCallback(async (next) => { setProducts(next); if (petId) reportSave(await saveKey(productsKey(petId), next)); }, [petId, reportSave]);
+  const persistMedPresets = useCallback(async (next) => { setMedPresets(next); if (petId) reportSave(await saveKey(medPresetsKey(petId), next)); }, [petId, reportSave]);
+  const persistMedLogs = useCallback(async (next) => { setMedLogs(next); if (petId) reportSave(await saveKey(medLogsKey(petId), next)); }, [petId, reportSave]);
 
   // Tapping a preset for a given date: if it's already logged that day, un-log it (undo a
   // mis-tap); otherwise add a log entry copying the preset's current name/dose/note.
@@ -3320,6 +3406,16 @@ function App() {
           )}
         </div>
 
+        {saveError && (
+          <div style={{
+            background: COLORS.dangerSoft, border: `1px solid ${COLORS.danger}44`,
+            borderRadius: 12, padding: "12px 14px", marginBottom: 14,
+            fontSize: 13, color: COLORS.danger, fontWeight: 600,
+          }}>
+            {saveError}
+          </div>
+        )}
+
         {loadError && (
           <div style={{
             background: COLORS.dangerSoft, border: `1px solid ${COLORS.danger}44`,
@@ -3383,6 +3479,7 @@ function App() {
                 role={role} existingDates={existingDates}
                 onSaveRecord={saveRecord} onDeleteRecord={deleteRecord}
                 onOpenInHistory={openInHistory} onQuickAddProduct={quickAddProduct}
+                onConfirm={setConfirmDialog}
                 medPresets={medPresets} medLogs={medLogs}
                 onSetDayMeds={setDayMedPresets} onAddManualMed={addManualMedLog}
                 onRemoveMedLog={removeMedLog}
@@ -3449,6 +3546,7 @@ function App() {
               onNextDay={idx >= 0 && idx < ordered.length - 1 ? () => goTo(idx + 1) : null}
               prevDate={idx > 0 ? ordered[idx - 1].date : null}
               nextDate={idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1].date : null}
+              onConfirm={setConfirmDialog}
               medPresets={medPresets} medLogs={medLogs}
               onSetDayMeds={setDayMedPresets} onAddManualMed={addManualMedLog}
               onRemoveMedLog={removeMedLog}
