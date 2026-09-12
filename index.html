@@ -1084,13 +1084,24 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
 }
 
 // ---------- Product Form ----------
-function ProductForm({ initial, onSave, onCancel, onDelete }) {
+function ProductForm({ initial, onSave, onCancel, onDelete, onDirtyChange }) {
   const [name, setName] = useState(initial?.name || "");
   const [startDate, setStartDate] = useState(initial?.startDate || todayStr());
   const [endDate, setEndDate] = useState(initial?.endDate || "");
   const [color, setColor] = useState(initial?.color || PALETTE[0].key);
   const [target, setTarget] = useState(initial?.dailyTarget ?? "");
   const [error, setError] = useState("");
+
+  // Same unsaved-changes tracking as the record form: compare against the starting values
+  // so typing and undoing doesn't count, and report upward so the parent can confirm.
+  const dirty =
+    name !== (initial?.name || "") ||
+    startDate !== (initial?.startDate || todayStr()) ||
+    endDate !== (initial?.endDate || "") ||
+    color !== (initial?.color || PALETTE[0].key) ||
+    String(target) !== String(initial?.dailyTarget ?? "");
+  useEffect(() => { if (onDirtyChange) onDirtyChange(dirty); }, [dirty]); // eslint-disable-line
+  useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, []); // eslint-disable-line
 
   const handleSave = () => {
     if (!name.trim()) { setError("請輸入產品名稱"); return; }
@@ -1396,11 +1407,12 @@ function targetInfo(record, products) {
 }
 
 // ---------- Day panel: view first, edit only after tapping 修改 ----------
-function DayPanelBody({ record, product, role, products, existingDates, onSave, onDelete, onOpenInHistory, onQuickAddProduct, onPrevDay, onNextDay, prevDate, nextDate, onConfirm, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function DayPanelBody({ record, product, role, products, existingDates, onSave, onDelete, onOpenInHistory, onQuickAddProduct, onPrevDay, onNextDay, prevDate, nextDate, onConfirm, onDirtyChange, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [editing, setEditing] = useState(false);
   // Same unsaved-changes guard as the add form: only prompt if something was edited.
   const editDirty = useRef(false);
-  const leaveEdit = () => { editDirty.current = false; setEditing(false); };
+  const clearDirty = () => { editDirty.current = false; if (onDirtyChange) onDirtyChange(false); };
+  const leaveEdit = () => { clearDirty(); setEditing(false); };
   const cancelEditGuarded = () => {
     if (!editDirty.current || !onConfirm) { leaveEdit(); return; }
     onConfirm({ message: "修改還沒儲存，離開的話剛剛的變更會不見。確定要離開嗎？", onYes: leaveEdit });
@@ -1429,11 +1441,11 @@ function DayPanelBody({ record, product, role, products, existingDates, onSave, 
         initial={record}
         products={products}
         existingDates={existingDates}
-        onSave={(rec) => { editDirty.current = false; onSave(rec); }}
+        onSave={(rec) => { clearDirty(); onSave(rec); }}
         onCancel={cancelEditGuarded}
         onDelete={(id) => onDelete && onDelete(id)}
         onQuickAddProduct={onQuickAddProduct}
-        onDirtyChange={(d) => { editDirty.current = d; }}
+        onDirtyChange={(d) => { editDirty.current = d; if (onDirtyChange) onDirtyChange(d); }}
         medPresets={medPresets} medLogs={medLogs}
         onSetDayMeds={onSetDayMeds} onAddManualMed={onAddManualMed}
         onRemoveMedLog={onRemoveMedLog} onManageMedPresets={onManageMedPresets}
@@ -1718,6 +1730,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
     return Math.max(0, total - defaultViewDays);
   });
   const [selectedDate, setSelectedDate] = useState(initialDate || null);
+  const chartEditDirty = useRef(false);
   const containerRef = useRef(null);
   const dragRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -1836,10 +1849,17 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
           <Card>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink }}>{selectedDate} 的紀錄</div>
-              <button onClick={() => setSelectedDate(null)} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft }}><X size={18} /></button>
+              <button onClick={() => {
+                // Same guard as the main day panel: this X sits outside the edit form.
+                if (!chartEditDirty.current) { setSelectedDate(null); return; }
+                const close = () => { chartEditDirty.current = false; setSelectedDate(null); };
+                if (onConfirm) onConfirm({ message: "修改還沒儲存，離開的話剛剛的變更會不見。確定要離開嗎？", onYes: close });
+                else close();
+              }} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft }}><X size={18} /></button>
             </div>
             <DayPanelBody
               key={selectedDate}
+              onDirtyChange={(d) => { chartEditDirty.current = d; }}
               record={selectedRecord}
               product={selectedProduct}
               role={role}
@@ -3059,6 +3079,21 @@ function App() {
   const [pinError, setPinError] = useState("");
   const [pinSettingsOpen, setPinSettingsOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null); // { message, onYes } — replaces window.confirm, which the sandbox can silently block
+  // Unsaved-changes guard for the product add/edit modals.
+  // The day panel's 返回 lives in the Modal header, outside the edit form — so the form's
+  // unsaved state has to be lifted here or leaving that way silently discards the edit.
+  const dayEditDirty = useRef(false);
+  const closeDayPanel = () => { dayEditDirty.current = false; setModal(null); };
+  const closeDayPanelGuarded = () => {
+    if (!dayEditDirty.current) { closeDayPanel(); return; }
+    setConfirmDialog({ message: "修改還沒儲存，離開的話剛剛的變更會不見。確定要離開嗎？", onYes: closeDayPanel });
+  };
+  const productDirty = useRef(false);
+  const closeProduct = () => { productDirty.current = false; setModal(null); };
+  const closeProductGuarded = () => {
+    if (!productDirty.current) { closeProduct(); return; }
+    setConfirmDialog({ message: "產品資料還沒儲存，離開的話剛剛填的內容會不見。確定要離開嗎？", onYes: closeProduct });
+  };
   const [petModal, setPetModal] = useState(null); // { mode:'add'|'edit', pet }
   const [vetViewedAt, setVetViewedAt] = useState(""); // ISO timestamp string, "" = never (for this pet)
   const [medPresetsOpen, setMedPresetsOpen] = useState(false);
@@ -3516,13 +3551,23 @@ function App() {
       </div>
 
       {modal?.type === "addProduct" && (
-        <Modal title="新增產品" onClose={() => setModal(null)}>
-          <ProductForm onSave={saveProduct} onCancel={() => setModal(null)} />
+        <Modal title="新增產品" onClose={closeProductGuarded}>
+          <ProductForm
+            onSave={(p) => { productDirty.current = false; saveProduct(p); }}
+            onCancel={closeProductGuarded}
+            onDirtyChange={(d) => { productDirty.current = d; }}
+          />
         </Modal>
       )}
       {modal?.type === "editProduct" && (
-        <Modal title="編輯產品" onClose={() => setModal(null)}>
-          <ProductForm initial={modal.payload} onSave={saveProduct} onCancel={() => setModal(null)} onDelete={deleteProduct} />
+        <Modal title="編輯產品" onClose={closeProductGuarded}>
+          <ProductForm
+            initial={modal.payload}
+            onSave={(p) => { productDirty.current = false; saveProduct(p); }}
+            onCancel={closeProductGuarded}
+            onDelete={deleteProduct}
+            onDirtyChange={(d) => { productDirty.current = d; }}
+          />
         </Modal>
       )}
       {modal?.type === "dayPanel" && (() => {
@@ -3531,9 +3576,10 @@ function App() {
         const idx = ordered.findIndex((r) => r.id === modal.payload.id);
         const goTo = (i) => { if (ordered[i]) setModal({ type: "dayPanel", payload: ordered[i] }); };
         return (
-          <Modal title="飲食日記" onClose={() => setModal(null)}>
+          <Modal title="飲食日記" onClose={closeDayPanelGuarded}>
             <DayPanelBody
               key={modal.payload.date}
+              onDirtyChange={(d) => { dayEditDirty.current = d; }}
               record={modal.payload}
               product={products.find((p) => p.id === modal.payload.productId)}
               role={role}
