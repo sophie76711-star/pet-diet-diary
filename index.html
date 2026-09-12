@@ -1173,7 +1173,9 @@ function DayDetail({ record, product, products = [], medLogs = [] }) {
   const NoteBlock = ({ label, text, tint }) => (
     <div style={{ background: tint, borderRadius: 10, padding: "10px 12px" }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.inkSoft, marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 13, color: COLORS.ink, lineHeight: 1.65 }}>{text}</div>
+      {/* whiteSpace: pre-wrap keeps the line breaks you typed — HTML collapses newlines
+          into single spaces by default, which ran every paragraph together into one blob. */}
+      <div style={{ fontSize: 13, color: COLORS.ink, lineHeight: 1.65, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{text}</div>
     </div>
   );
 
