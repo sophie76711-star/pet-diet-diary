@@ -1154,7 +1154,10 @@ function ProductForm({ initial, onSave, onCancel, onDelete, onDirtyChange }) {
 // ---------- Modal ----------
 // Full-screen sheet with a fixed header: on a phone the record form is long, so a small
 // floating box meant the close button scrolled away and the page behind kept moving.
-function Modal({ title, onClose, children, width = 560, footer }) {
+// compact=true renders a small centred dialog instead of the full-height sheet. The sheet
+// layout exists for long forms; a one-line confirmation filling the whole screen reads as a
+// page change rather than a question, so confirmations use the compact form.
+function Modal({ title, onClose, children, width = 560, footer, compact = false }) {
   // Close on the hardware/gesture back action so it behaves like a real page
   useEffect(() => {
     window.history.pushState({ modal: true }, "");
@@ -1169,34 +1172,46 @@ function Modal({ title, onClose, children, width = 560, footer }) {
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(38,51,46,0.45)", zIndex: 50,
-      display: "flex", alignItems: "center", justifyContent: "center", padding: "0",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: compact ? 20 : "0",
     }} onClick={onClose} className="modal-backdrop">
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{
+        style={compact ? {
+          background: COLORS.bg, width: "100%", maxWidth: 360, borderRadius: 16,
+          display: "flex", flexDirection: "column", maxHeight: "80dvh",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+        } : {
           background: COLORS.bg, width: "100%", maxWidth: width,
           height: "100dvh", display: "flex", flexDirection: "column",
           boxShadow: "0 -6px 30px rgba(0,0,0,0.2)",
         }}
-        className="modal-sheet"
+        className={compact ? "modal-compact" : "modal-sheet"}
       >
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
-          padding: "12px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 14px)",
-          borderBottom: `1px solid ${COLORS.line}`, background: COLORS.bg,
-        }}>
-          <button onClick={onClose} style={{
-            display: "flex", alignItems: "center", gap: 2, background: "none", border: "none",
-            cursor: "pointer", color: COLORS.accent, fontSize: 14, fontWeight: 600, padding: 0, flexShrink: 0,
-          }}><ChevronLeft size={18} />返回</button>
-          <h3 style={{
-            margin: 0, flex: 1, textAlign: "center", fontFamily: "'Source Serif 4', serif",
-            fontSize: 17, color: COLORS.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>{title}</h3>
-          <div style={{ width: 52, flexShrink: 0 }} />
-        </div>
+        {compact ? (
+          <div style={{ padding: "18px 18px 0", flexShrink: 0 }}>
+            <h3 style={{
+              margin: 0, fontFamily: "'Source Serif 4', serif", fontSize: 17, color: COLORS.ink,
+            }}>{title}</h3>
+          </div>
+        ) : (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
+            padding: "12px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 14px)",
+            borderBottom: `1px solid ${COLORS.line}`, background: COLORS.bg,
+          }}>
+            <button onClick={onClose} style={{
+              display: "flex", alignItems: "center", gap: 2, background: "none", border: "none",
+              cursor: "pointer", color: COLORS.accent, fontSize: 14, fontWeight: 600, padding: 0, flexShrink: 0,
+            }}><ChevronLeft size={18} />返回</button>
+            <h3 style={{
+              margin: 0, flex: 1, textAlign: "center", fontFamily: "'Source Serif 4', serif",
+              fontSize: 17, color: COLORS.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>{title}</h3>
+            <div style={{ width: 52, flexShrink: 0 }} />
+          </div>
+        )}
 
-        <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: 16, paddingBottom: 24 }}>
+        <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: compact ? 18 : 16, paddingBottom: compact ? 18 : 24 }}>
           {children}
         </div>
 
@@ -3335,7 +3350,7 @@ function App() {
           </Modal>
         )}
         {confirmDialog && (
-          <Modal title="請確認" onClose={() => setConfirmDialog(null)}>
+          <Modal title="請確認" compact onClose={() => setConfirmDialog(null)}>
             <div style={{ fontSize: 14, color: COLORS.ink, lineHeight: 1.6, marginBottom: 20 }}>{confirmDialog.message}</div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>取消</Btn>
@@ -3623,7 +3638,7 @@ function App() {
       )}
 
       {confirmDialog && (
-        <Modal title="請確認" onClose={() => setConfirmDialog(null)}>
+        <Modal title="請確認" compact onClose={() => setConfirmDialog(null)}>
           <div style={{ fontSize: 14, color: COLORS.ink, lineHeight: 1.6, marginBottom: 20 }}>{confirmDialog.message}</div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
             <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>取消</Btn>
