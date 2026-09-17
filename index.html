@@ -1157,7 +1157,7 @@ function ProductForm({ initial, onSave, onCancel, onDelete, onDirtyChange }) {
 // compact=true renders a small centred dialog instead of the full-height sheet. The sheet
 // layout exists for long forms; a one-line confirmation filling the whole screen reads as a
 // page change rather than a question, so confirmations use the compact form.
-function Modal({ title, onClose, children, width = 560, footer, compact = false }) {
+function Modal({ title, onClose, children, width = 560, footer, compact = false, zIndex = 50 }) {
   // Close on the hardware/gesture back action so it behaves like a real page
   useEffect(() => {
     window.history.pushState({ modal: true }, "");
@@ -1171,7 +1171,7 @@ function Modal({ title, onClose, children, width = 560, footer, compact = false 
 
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "rgba(38,51,46,0.45)", zIndex: 50,
+      position: "fixed", inset: 0, background: "rgba(38,51,46,0.45)", zIndex,
       display: "flex", alignItems: "center", justifyContent: "center", padding: compact ? 20 : "0",
     }} onClick={onClose} className="modal-backdrop">
       <div
@@ -3198,7 +3198,23 @@ function App() {
     persistMedLogs([...medLogs, entry]);
     if (saveAsPreset) persistMedPresets([...medPresets, { id: uid(), name, dose: dose || "", note: note || "" }]);
   };
-  const removeMedLog = (id) => persistMedLogs(medLogs.filter((l) => l.id !== id));
+  const removeMedLogNow = (id) => persistMedLogs(medLogs.filter((l) => l.id !== id));
+  const removeMedLog = (id) => {
+    const log = medLogs.find((l) => l.id === id);
+    setConfirmDialog({
+      message: log ? `確定要刪除「${log.name}」這筆用藥紀錄嗎？` : "確定要刪除這筆用藥紀錄嗎？",
+      onYes: () => removeMedLogNow(id),
+    });
+  };
+  // Removing a preset doesn't touch past logs (they keep their own copy of the name/dose),
+  // but it does change what's tappable day to day, so confirm that too.
+  const removeMedPreset = (id) => {
+    const preset = medPresets.find((p) => p.id === id);
+    setConfirmDialog({
+      message: preset ? `確定要從常用藥移除「${preset.name}」嗎？已經記錄過的用藥不會受影響。` : "確定要移除這個常用藥嗎？",
+      onYes: () => persistMedPresets(medPresets.filter((p) => p.id !== id)),
+    });
+  };
   // Multi-select "which presets applied today" from one dropdown — computes the whole
   // diff and writes once. (Calling toggleMedPreset in a loop for each change would race:
   // every call in the same synchronous handler reads the same stale medLogs snapshot, so
@@ -3244,14 +3260,31 @@ function App() {
     persistRecords(next);
     setModal(null);
   };
-  const deleteRecord = (id) => { persistRecords(records.filter((r) => r.id !== id)); setModal(null); };
+  const deleteRecordNow = (id) => { persistRecords(records.filter((r) => r.id !== id)); setModal(null); };
+  // Deleting is irreversible and there is no server-side history to restore from, so every
+  // delete path must confirm first. Guarding here (rather than at each button) means any
+  // current or future caller inherits the confirmation automatically.
+  const deleteRecord = (id) => {
+    const rec = records.find((r) => r.id === id);
+    setConfirmDialog({
+      message: rec ? `確定要刪除 ${rec.date} 的紀錄嗎？刪除後無法復原。` : "確定要刪除這筆紀錄嗎？刪除後無法復原。",
+      onYes: () => deleteRecordNow(id),
+    });
+  };
   const saveProduct = (prod) => {
     const exists = products.some((p) => p.id === prod.id);
     const next = exists ? products.map((p) => (p.id === prod.id ? prod : p)) : [...products, prod];
     persistProducts(next);
     setModal(null);
   };
-  const deleteProduct = (id) => { persistProducts(products.filter((p) => p.id !== id)); setModal(null); };
+  const deleteProductNow = (id) => { persistProducts(products.filter((p) => p.id !== id)); setModal(null); };
+  const deleteProduct = (id) => {
+    const prod = products.find((p) => p.id === id);
+    setConfirmDialog({
+      message: prod ? `確定要刪除產品「${prod.name}」嗎？刪除後無法復原。` : "確定要刪除這個產品嗎？刪除後無法復原。",
+      onYes: () => deleteProductNow(id),
+    });
+  };
   const deleteRecords = (ids) => { persistRecords(records.filter((r) => !ids.includes(r.id))); };
   // startDate defaults to the record being written, so a product added while back-filling an
   // earlier day covers that day on the charts instead of starting "today"
@@ -3350,7 +3383,7 @@ function App() {
           </Modal>
         )}
         {confirmDialog && (
-          <Modal title="請確認" compact onClose={() => setConfirmDialog(null)}>
+          <Modal title="請確認" compact zIndex={100} onClose={() => setConfirmDialog(null)}>
             <div style={{ fontSize: 14, color: COLORS.ink, lineHeight: 1.6, marginBottom: 20 }}>{confirmDialog.message}</div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>取消</Btn>
@@ -3557,7 +3590,7 @@ function App() {
               <MedicationsScreen
                 medPresets={medPresets} medLogs={medLogs} role={role}
                 onAddPreset={(preset) => persistMedPresets([...medPresets, preset])}
-                onRemovePreset={(id) => persistMedPresets(medPresets.filter((p) => p.id !== id))}
+                onRemovePreset={removeMedPreset}
                 onRemoveLog={removeMedLog}
               />
             )}
@@ -3621,7 +3654,7 @@ function App() {
         <MedPresetManager
           medPresets={medPresets}
           onAdd={(preset) => persistMedPresets([...medPresets, preset])}
-          onRemove={(id) => persistMedPresets(medPresets.filter((p) => p.id !== id))}
+          onRemove={removeMedPreset}
           onClose={() => setMedPresetsOpen(false)}
         />
       )}
@@ -3638,7 +3671,7 @@ function App() {
       )}
 
       {confirmDialog && (
-        <Modal title="請確認" compact onClose={() => setConfirmDialog(null)}>
+        <Modal title="請確認" compact zIndex={100} onClose={() => setConfirmDialog(null)}>
           <div style={{ fontSize: 14, color: COLORS.ink, lineHeight: 1.6, marginBottom: 20 }}>{confirmDialog.message}</div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
             <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>取消</Btn>
