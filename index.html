@@ -1232,6 +1232,8 @@ function Modal({ title, onClose, children, width = 560, footer, compact = false,
 // exactly as-is; this only feeds the per-day badge on the day detail page.
 function dayRating(record, product) {
   const ti = targetInfo(record, product ? [product] : []);
+  // Deliberately without products: intake is scored on its own line below, so letting
+  // flagsForRecord add an intake flag here would penalise the same thing twice.
   const flags = flagsForRecord(record);
   let score = 100;
   if (ti) score -= ti.pct < 70 ? 30 : ti.pct < 90 ? 15 : ti.pct > 130 ? 12 : 0;
@@ -2064,12 +2066,20 @@ function Dashboard({ records, products, role, existingDates, onSaveRecord, onDel
 }
 
 // ---------- History ----------
-function flagsForRecord(r) {
+// products is optional: without it, intake can't be judged (the target lives on the
+// product), and the other checks still apply.
+function flagsForRecord(r, products = []) {
   const flags = [];
   if (r.vomit > 0) flags.push({ key: "vomit", label: `嘔吐 ${r.vomit} 次`, color: COLORS.danger });
   if (r.mental <= 2) flags.push({ key: "mental", label: "精神偏低", color: COLORS.danger });
   if (r.stool <= 2) flags.push({ key: "stool", label: "便便偏硬", color: COLORS.gold });
   if (r.stool >= 6) flags.push({ key: "stool", label: "便便偏軟／腹瀉", color: COLORS.gold });
+  // Eating far below target is exactly the kind of thing worth spotting on the calendar,
+  // but it used to show only as live text while typing and never became a flag.
+  const ti = targetInfo(r, products);
+  if (ti && ti.pct < 70) flags.push({ key: "intake", label: `食量偏少（${ti.pct}%）`, color: COLORS.danger });
+  else if (ti && ti.pct < 90) flags.push({ key: "intake", label: `食量略少（${ti.pct}%）`, color: COLORS.gold });
+  else if (ti && ti.pct > 130) flags.push({ key: "intake", label: `食量偏多（${ti.pct}%）`, color: COLORS.gold });
   return flags;
 }
 
@@ -2156,9 +2166,9 @@ function RecordRow({ r, onSelect, selectMode, selected, onToggleSelect }) {
 function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, onShiftMonth }) {
   const byDate = useMemo(() => {
     const m = new Map();
-    records.forEach((r) => m.set(r.date, { ...r, _flags: flagsForRecord(r) }));
+    records.forEach((r) => m.set(r.date, { ...r, _flags: flagsForRecord(r, products) }));
     return m;
-  }, [records]);
+  }, [records, products]);
 
   const prodOf = (r) => products.find((p) => p.id === r.productId);
 
@@ -2324,7 +2334,7 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
   const [monthOffset, setMonthOffset] = useState(0);
 
   const sorted = useMemo(() => [...records].sort((a, b) => b.date.localeCompare(a.date)), [records]);
-  const withFlags = useMemo(() => sorted.map((r) => ({ ...r, _flags: flagsForRecord(r) })), [sorted]);
+  const withFlags = useMemo(() => sorted.map((r) => ({ ...r, _flags: flagsForRecord(r, products) })), [sorted, products]);
   const flaggedCount = withFlags.filter((r) => r._flags.length > 0).length;
   const searchActive = search.trim().length > 0 || onlyFlagged;
 
@@ -2819,6 +2829,8 @@ function HealthSummary({ records, products }) {
 
   const days = inPeriod.length;
   const avg = Math.round(inPeriod.reduce((sum, r) => sum + r.breakfast + r.dinner + r.bedtime, 0) / days);
+  // Also without products, for the same reason: this summary reports average intake as its
+  // own figure, so intake must not additionally inflate the abnormal-day count.
   const flaggedDays = inPeriod.filter((r) => flagsForRecord(r).length > 0).length;
   const vomitDays = inPeriod.filter((r) => r.vomit > 0).length;
   const target = current?.dailyTarget || null;
