@@ -143,13 +143,17 @@ function LockIcon({ size = 18, color = COLORS.accent, style }) {
   );
 }
 
+// Muted, low-chroma versions of the original palette. The previous tints were saturated
+// enough that a grid full of them competed with the red attention marker, which is why the
+// marker had to keep getting louder to stand out. Desaturating the field lets a single red
+// number do the job instead. `band` is the stronger stripe colour used on calendar tiles.
 const PALETTE = [
-  { key: "teal", bg: "#DCEEEA", border: "#5B9C8F" },
-  { key: "gold", bg: "#F6E8BE", border: "#C9A227" },
-  { key: "rose", bg: "#F3DEE0", border: "#C97C86" },
-  { key: "lavender", bg: "#E4E0F2", border: "#8D7FBE" },
-  { key: "mint", bg: "#DFF0DE", border: "#6FA36A" },
-  { key: "peach", bg: "#F5E2D0", border: "#D89A5D" },
+  { key: "teal", bg: "#E4EEEB", band: "#7FAFA4", border: "#5B9C8F" },
+  { key: "gold", bg: "#F1E9D5", band: "#C9B575", border: "#B59B3F" },
+  { key: "rose", bg: "#F0E2E3", band: "#C79AA0", border: "#B87F88" },
+  { key: "lavender", bg: "#E6E3F0", band: "#9E94C4", border: "#8D7FBE" },
+  { key: "mint", bg: "#E5EDE3", band: "#8FB189", border: "#6FA36A" },
+  { key: "peach", bg: "#F1E5D9", band: "#D4A87C", border: "#C48D5D" },
 ];
 
 const swatch = (key) => PALETTE.find((p) => p.key === key) || PALETTE[0];
@@ -2286,13 +2290,13 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, marginBottom: 6 }}>
         {["日", "一", "二", "三", "四", "五", "六"].map((w) => (
           <div key={w} style={{ textAlign: "center", fontSize: 11, color: COLORS.inkSoft, fontWeight: 600 }}>{w}</div>
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
         {cells.map((d, i) => {
           if (d === null) return <div key={`x${i}`} />;
           const r = byDate.get(iso(d));
@@ -2317,26 +2321,31 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
               disabled={!r && !onCreateDate}
               aria-label={r ? `查看 ${iso(d)} 的紀錄${needsAttention ? "（需要注意）" : ""}` : onCreateDate ? `新增 ${iso(d)} 的紀錄` : undefined}
               style={{
-                position: "relative",
-                aspectRatio: "1 / 1", borderRadius: 12, padding: 2,
-                border: needsAttention
-                  ? `2px solid ${COLORS.danger}`
-                  : `1.5px solid ${r ? sw.border + "66" : onCreateDate ? COLORS.line : "transparent"}`,
-                background: r ? sw.bg : onCreateDate ? "#FAFAF7" : "transparent",
+                position: "relative", overflow: "hidden",
+                aspectRatio: "1 / 1", borderRadius: 12,
+                padding: "2px 2px 6px",
+                // Quiet field, loud only where it matters: the tile stays near-white so a
+                // single red numeral reads as an alert. Filling every tile with food colour
+                // made the whole grid shout, which forced the marker to shout louder.
+                border: `1px solid ${needsAttention ? COLORS.danger : r ? COLORS.line : onCreateDate ? COLORS.line : "transparent"}`,
+                background: r ? "#fff" : onCreateDate ? "#FAFAF7" : "transparent",
                 cursor: r || onCreateDate ? "pointer" : "default",
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1,
               }}
             >
-              {needsAttention && (
+              <span className="cal-day" style={{
+                fontSize: 13, fontWeight: needsAttention ? 800 : 700,
+                color: needsAttention ? COLORS.danger : r ? COLORS.ink : COLORS.line,
+              }}>{d}</span>
+              {r && <span className="cal-grams" style={{ fontSize: 10, lineHeight: 1, fontWeight: 500, color: "#A8A79E" }}>{total}g</span>}
+              {/* Food as a bottom stripe: consecutive days join into one continuous band, so
+                  a change of food reads as a break in the band without tinting the tile. */}
+              {r && (
                 <span style={{
-                  position: "absolute", top: -6, right: -5,
-                  width: 16, height: 16, borderRadius: 8,
-                  background: COLORS.danger, color: "#fff",
-                  fontSize: 11, fontWeight: 800, lineHeight: "16px", textAlign: "center",
-                }}>!</span>
+                  position: "absolute", left: 0, right: 0, bottom: 0,
+                  height: 4, background: sw.band,
+                }} />
               )}
-              <span className="cal-day" style={{ fontSize: 13, fontWeight: 700, color: r ? COLORS.ink : COLORS.line }}>{d}</span>
-              {r && <span className="cal-grams" style={{ fontSize: 10, lineHeight: 1, fontWeight: 600, color: COLORS.inkSoft }}>{total}g</span>}
             </button>
           );
         })}
@@ -2353,12 +2362,14 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
         return (
           <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
             {used.map((pr) => (
+              // The swatch here is a short bar, the same shape and colour as the stripe on
+              // the tiles, so matching a food to its days needs no translation step.
               <span key={pr.id} style={{
-                display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: COLORS.ink,
-                background: swatch(pr.color).bg, border: `1px solid ${swatch(pr.color).border}`,
+                display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: COLORS.ink,
+                background: "#fff", border: `1px solid ${COLORS.line}`,
                 borderRadius: 999, padding: "4px 10px",
               }}>
-                <span style={{ width: 7, height: 7, borderRadius: 4, background: swatch(pr.color).border }} />
+                <span style={{ width: 14, height: 4, borderRadius: 2, background: swatch(pr.color).band }} />
                 {pr.name}
               </span>
             ))}
@@ -2367,18 +2378,16 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
       })()}
 
       <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 10, fontSize: 11, color: COLORS.inkSoft, flexWrap: "wrap" }}>
-        {/* The food colours are already labelled above; this only explains the red mark. */}
+        {/* The food names are already listed above with their colours; this explains the
+            two things the grid itself encodes. */}
         <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <span style={{ position: "relative", display: "inline-block", width: 14, height: 14 }}>
-            <span style={{ position: "absolute", inset: 0, borderRadius: 3, border: `2px solid ${COLORS.danger}` }} />
-            <span style={{
-              position: "absolute", top: -4, right: -4, width: 11, height: 11, borderRadius: 6,
-              background: COLORS.danger, color: "#fff", fontSize: 8, fontWeight: 800, lineHeight: "11px", textAlign: "center",
-            }}>!</span>
-          </span>
-          需要注意（嘔吐／精神低／便便異常／食量不足）
+          <span style={{ color: COLORS.danger, fontWeight: 800, fontSize: 13 }}>12</span>
+          紅色日期 = 需要注意
         </span>
-        <span>格子顏色代表當天吃的飼料</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ display: "inline-block", width: 16, height: 4, borderRadius: 2, background: PALETTE[0].band }} />
+          底線顏色 = 當天的飼料
+        </span>
       </div>
     </div>
   );
