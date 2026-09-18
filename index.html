@@ -47,7 +47,6 @@ const ChevronRight = mkIcon(<path d="m9 18 6-6-6-6" />);
 const ChevronDown = mkIcon(<path d="m6 9 6 6 6-6" />);
 const AlertCircle = mkIcon(<><circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" /></>);
 const Check = mkIcon(<path d="M20 6 9 17l-5-5" />);
-const Home = mkIcon(<><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M9 22V12h6v10" /></>);
 const Maximize2 = mkIcon(<><path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" /></>);
 const ZoomIn = mkIcon(<><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M11 8v6" /><path d="M8 11h6" /></>);
 const ZoomOut = mkIcon(<><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /><path d="M8 11h6" /></>);
@@ -554,7 +553,7 @@ function BristolPlaceholder({ compact }) {
 // deleting a preset later never rewrites history that's already been shown to a vet. Ad
 // hoc entries (something one-off, not worth saving as a preset) skip presets entirely —
 // covers "the medication is different basically every time."
-function MedSection({ date, medPresets, medLogs, role, onTogglePreset, onAddManual, onRemoveLog, onManagePresets }) {
+function MedSection({ date, medPresets, medLogs, role, onTogglePreset, onAddManual, onRemoveLog, onManagePresets, hideHeader = false }) {
   const dayLogs = medLogs.filter((l) => l.date === date);
   // Only ad hoc entries go in the list below — anything tied to a preset is already fully
   // represented by that preset's chip (checked = given), so listing it again there too was
@@ -574,14 +573,16 @@ function MedSection({ date, medPresets, medLogs, role, onTogglePreset, onAddManu
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink }}>用藥</div>
-        {role === "owner" && onManagePresets && (
-          <button onClick={onManagePresets} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, display: "flex", alignItems: "center", gap: 3 }}>
-            <Pencil size={11} />常用藥
-          </button>
-        )}
-      </div>
+      {!hideHeader && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink }}>用藥</div>
+          {role === "owner" && onManagePresets && (
+            <button onClick={onManagePresets} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, fontSize: 12, display: "flex", alignItems: "center", gap: 3 }}>
+              <Pencil size={11} />常用藥
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Every regular medication as a pill — checked = given today. Tappable for the
           owner (tap to log / un-log); shown the same way but non-interactive for the vet,
@@ -973,6 +974,28 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
         const selectedIds = medPresets.filter((p) => dayLogs.some((l) => l.presetId === p.id)).map((p) => p.id);
         return (
           <Field label="用藥">
+            {/* A multi-select alone reads as "5個項目" on iOS — you can't see what's chosen
+                without opening it. The chips above are the actual readout; the select stays
+                as the way to change things. */}
+            {medPresets.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                {selectedIds.length === 0 ? (
+                  <span style={{ fontSize: 12, color: COLORS.inkSoft }}>今天還沒選任何常用藥</span>
+                ) : (
+                  medPresets.filter((p) => selectedIds.includes(p.id)).map((p) => (
+                    <span key={p.id} style={{
+                      display: "inline-flex", alignItems: "center", gap: 5,
+                      padding: "5px 10px", borderRadius: 999,
+                      border: `1px solid ${COLORS.accent}`, background: COLORS.accentSoft,
+                      color: COLORS.accent, fontSize: 12, fontWeight: 700,
+                    }}>
+                      <Check size={11} strokeWidth={3} />
+                      {p.name}{p.dose ? ` · ${p.dose}` : ""}
+                    </span>
+                  ))
+                )}
+              </div>
+            )}
             {medPresets.length > 0 ? (
               <select multiple value={selectedIds}
                 onChange={(e) => onSetDayMeds(date, Array.from(e.target.selectedOptions).map((o) => o.value))}
@@ -1236,46 +1259,49 @@ function Modal({ title, onClose, children, width = 560, footer, compact = false,
 // disagree ("狀況穩定" on the hub while the calendar was all red). Everything now derives
 // from dayLevel() below, so one day has exactly one severity everywhere it appears.
 //
-// level: 0 = fine, 1 = worth watching (gold), 2 = needs attention (red)
+// level: 0 = fine, 1 = needs attention (red). Two levels on purpose — a middle "watch"
+// tier ended up covering almost every day (this cat habitually eats ~67% of target), and a
+// marker that appears daily stops being a marker.
 const LEVEL_META = [
   { color: COLORS.accent, word: "狀況不錯", mood: 5 },
-  { color: COLORS.gold, word: "要留意", mood: 3 },
   { color: COLORS.danger, word: "需要注意", mood: 1 },
 ];
 
-// Returns { level, reasons } for one day. reasons are short human-readable strings, each
-// tagged with the level it contributed, so any screen can explain WHY a day is marked.
+// Returns { level, reasons } for one day. reasons are short human-readable strings so any
+// screen can explain WHY a day is marked, rather than just showing a colour.
 function dayLevel(record, products = []) {
   const reasons = [];
   let level = 0;
-  const bump = (lv, text) => { reasons.push({ level: lv, text }); if (lv > level) level = lv; };
+  const bump = (text) => { reasons.push({ text }); level = 1; };
 
-  if (record.vomit > 0) bump(2, `嘔吐 ${record.vomit} 次`);
-  if (record.mental <= 2) bump(2, "精神偏低");
-  if (record.stool <= 2) bump(1, "便便偏硬");
-  if (record.stool >= 6) bump(1, "便便偏軟／腹瀉");
+  if (record.vomit > 0) bump(`嘔吐 ${record.vomit} 次`);
+  if (record.mental <= 2) bump("精神偏低");
+  if (record.stool <= 2) bump("便便偏硬");
+  if (record.stool >= 6) bump("便便偏軟／腹瀉");
 
   const ti = targetInfo(record, products);
-  if (ti) {
-    if (ti.pct < 65) bump(2, `食量偏少（${ti.pct}%）`);
-    else if (ti.pct < 90) bump(1, `食量略少（${ti.pct}%）`);
-    else if (ti.pct > 130) bump(1, `食量偏多（${ti.pct}%）`);
-  }
+  // Only a clear shortfall counts. Mild under-eating still shows as text and on the charts,
+  // it just doesn't raise a flag it would raise every single day.
+  if (ti && ti.pct < 65) bump(`食量偏少（${ti.pct}%）`);
   return { level, reasons, ...LEVEL_META[level] };
 }
 
-// Period view: same scale, aggregated. A period is as bad as its worst sustained pattern,
-// not the average — one red day in ten still matters clinically.
+// Period view (the hub summary for one food). Three tiers here, unlike the two used per
+// day: over a whole feeding period "2 bad days out of 30" and "15 bad days out of 30" are
+// clinically different answers, and a two-tier scale would collapse them into one. The
+// tiers are still derived purely from the per-day result, so the hub can never disagree
+// with the calendar — it only weighs how many of those days there were.
+const PERIOD_META = [
+  { color: COLORS.accent, word: "狀況穩定", mood: 5 },
+  { color: COLORS.gold, word: "要留意", mood: 3 },
+  { color: COLORS.danger, word: "需要注意", mood: 1 },
+];
 function periodLevel(records, products = []) {
-  if (records.length === 0) return { level: 0, ...LEVEL_META[0], redDays: 0, goldDays: 0, days: 0 };
-  const levels = records.map((r) => dayLevel(r, products).level);
-  const redDays = levels.filter((l) => l === 2).length;
-  const goldDays = levels.filter((l) => l === 1).length;
+  if (records.length === 0) return { level: 0, ...PERIOD_META[0], redDays: 0, days: 0 };
+  const redDays = records.filter((r) => dayLevel(r, products).level === 1).length;
   const days = records.length;
-  // Red if attention-level days are frequent (>=20%) or there are several of them;
-  // gold if any red day happened at all, or watch-level days dominate.
-  const level = redDays / days >= 0.2 || redDays >= 3 ? 2 : (redDays > 0 || goldDays / days >= 0.4) ? 1 : 0;
-  return { level, ...LEVEL_META[level], redDays, goldDays, days };
+  const level = redDays === 0 ? 0 : (redDays / days >= 0.2 || redDays >= 3) ? 2 : 1;
+  return { level, ...PERIOD_META[level], redDays, days };
 }
 
 function dayRating(record, product) {
@@ -1316,7 +1342,11 @@ function DayDetail({ record, product, products = [], medLogs = [] }) {
         <CatMoodIcon score={day.mood} size={32} color={day.color} />
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: day.color }}>{day.word}</div>
-          <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 1 }}>綜合精神、便便、嘔吐與食量估算，僅供參考</div>
+          <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 1 }}>
+            {day.reasons.length > 0
+              ? day.reasons.map((x) => x.text).join("・")
+              : "精神、便便、嘔吐與食量都在正常範圍"}
+          </div>
         </div>
       </div>
 
@@ -2103,17 +2133,12 @@ function Dashboard({ records, products, role, existingDates, onSaveRecord, onDel
 // ---------- History ----------
 // products is optional: without it, intake can't be judged (the target lives on the
 // product), and the other checks still apply.
-// Thin wrapper kept for the screens that want a flag list rather than a level. Derived
-// from dayLevel so it can never disagree with the colours shown elsewhere.
-function flagsForRecord(r, products = []) {
-  return dayLevel(r, products).reasons.map((x, i) => ({
-    key: `r${i}`, label: x.text, color: LEVEL_META[x.level].color,
-  }));
-}
-
 // Traffic-light colors so severity reads instantly without doing math on the number
-const mentalColor = (v) => (v <= 2 ? COLORS.danger : v === 3 ? COLORS.gold : COLORS.accent);
-const stoolColor = (v) => (v <= 2 || v >= 6 ? COLORS.danger : v === 5 ? COLORS.gold : COLORS.accent);
+// Must match dayLevel's thresholds exactly. These used to have their own opinions — stool 5
+// and mental 3 were painted gold here while dayLevel counted them as fine — so the same day
+// could look "a bit off" in the list and clean on the calendar.
+const mentalColor = (v) => (v <= 2 ? COLORS.danger : COLORS.accent);
+const stoolColor = (v) => (v <= 2 || v >= 6 ? COLORS.danger : COLORS.accent);
 
 function StatPill({ tag, value, color }) {
   return (
@@ -2197,7 +2222,7 @@ function RecordRow({ r, onSelect, selectMode, selected, onToggleSelect }) {
 function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, onShiftMonth }) {
   const byDate = useMemo(() => {
     const m = new Map();
-    records.forEach((r) => m.set(r.date, { ...r, _flags: flagsForRecord(r, products), _level: dayLevel(r, products).level }));
+    records.forEach((r) => m.set(r.date, { ...r, _level: dayLevel(r, products).level }));
     return m;
   }, [records, products]);
 
@@ -2224,8 +2249,7 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
     : 0;
   // Count only danger-level days as 異常, matching the red tiles. Gold days are reported
   // separately so "18 天異常" can't be driven by mildly-under-target days.
-  const flaggedDays = monthRecords.filter((r) => r._level === 2).length;
-  const watchDays = monthRecords.filter((r) => r._level === 1).length;
+  const flaggedDays = monthRecords.filter((r) => r._level === 1).length;
 
   return (
     <div>
@@ -2238,8 +2262,7 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
           <div style={{ fontWeight: 700, fontSize: 15, color: COLORS.ink }}>{year} 年 {month + 1} 月</div>
           <div style={{ fontSize: 11, color: COLORS.inkSoft }}>
             {monthRecords.length} 天紀錄{monthRecords.length > 0 && `・平均 ${avg}g`}
-            {flaggedDays > 0 && <span style={{ color: COLORS.danger, fontWeight: 600 }}>・{flaggedDays} 天異常</span>}
-            {watchDays > 0 && <span style={{ color: COLORS.gold, fontWeight: 600 }}>・{watchDays} 天要留意</span>}
+            {flaggedDays > 0 && <span style={{ color: COLORS.danger, fontWeight: 600 }}>・{flaggedDays} 天需要注意</span>}
           </div>
         </div>
         <button onClick={() => onShiftMonth(1)} disabled={monthOffset >= 0} aria-label="下個月" style={{
@@ -2277,24 +2300,41 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
           // carries severity and nothing else — the three status dots and the target-tinted
           // gram colour used to pack five channels into a ~45px square that had to be
           // decoded against a legend. Everything removed here is still on the day page.
-          const lv = r ? r._level : 0;
+          // Two independent channels so neither has to give way to the other:
+          //   fill  = which food that day (a wide area, so periods read as solid blocks and
+          //           a switch of food is obvious as a change of colour)
+          //   mark  = red border + a "!" corner, only on days needing attention (a sparse
+          //           mark on top of the fill, like annotating a page)
+          // Using fill for severity instead made feeding periods unreadable, and using it
+          // for food alone left no room for severity at all.
+          const needsAttention = r ? r._level === 1 : false;
           const total = r ? r.breakfast + r.dinner + r.bedtime : null;
-          const tint = lv === 2 ? COLORS.dangerSoft : lv === 1 ? "#F6E8BE80" : r ? "#fff" : onCreateDate ? "#FAFAF7" : "transparent";
-          const edge = lv === 2 ? COLORS.danger : lv === 1 ? COLORS.gold : r ? COLORS.line : onCreateDate ? COLORS.line : "transparent";
+          const sw = r ? swatch(prodOf(r)?.color) : null;
           return (
             <button
               key={d}
               onClick={() => (r ? onSelect(r.date) : onCreateDate && onCreateDate(iso(d)))}
               disabled={!r && !onCreateDate}
-              aria-label={r ? `查看 ${iso(d)} 的紀錄${lv === 2 ? "（需要注意）" : lv === 1 ? "（要留意）" : ""}` : onCreateDate ? `新增 ${iso(d)} 的紀錄` : undefined}
+              aria-label={r ? `查看 ${iso(d)} 的紀錄${needsAttention ? "（需要注意）" : ""}` : onCreateDate ? `新增 ${iso(d)} 的紀錄` : undefined}
               style={{
+                position: "relative",
                 aspectRatio: "1 / 1", borderRadius: 12, padding: 2,
-                border: `1.5px solid ${edge}`,
-                background: tint,
+                border: needsAttention
+                  ? `2px solid ${COLORS.danger}`
+                  : `1.5px solid ${r ? sw.border + "66" : onCreateDate ? COLORS.line : "transparent"}`,
+                background: r ? sw.bg : onCreateDate ? "#FAFAF7" : "transparent",
                 cursor: r || onCreateDate ? "pointer" : "default",
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
               }}
             >
+              {needsAttention && (
+                <span style={{
+                  position: "absolute", top: -6, right: -5,
+                  width: 16, height: 16, borderRadius: 8,
+                  background: COLORS.danger, color: "#fff",
+                  fontSize: 11, fontWeight: 800, lineHeight: "16px", textAlign: "center",
+                }}>!</span>
+              )}
               <span className="cal-day" style={{ fontSize: 13, fontWeight: 700, color: r ? COLORS.ink : COLORS.line }}>{d}</span>
               {r && <span className="cal-grams" style={{ fontSize: 10, lineHeight: 1, fontWeight: 600, color: COLORS.inkSoft }}>{total}g</span>}
             </button>
@@ -2327,16 +2367,18 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
       })()}
 
       <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 10, fontSize: 11, color: COLORS.inkSoft, flexWrap: "wrap" }}>
-        {/* Three states, matching the tiles exactly — no dot-order key to memorise. */}
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 3, background: "#fff", border: `1.5px solid ${COLORS.line}` }} />正常
+        {/* The food colours are already labelled above; this only explains the red mark. */}
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ position: "relative", display: "inline-block", width: 14, height: 14 }}>
+            <span style={{ position: "absolute", inset: 0, borderRadius: 3, border: `2px solid ${COLORS.danger}` }} />
+            <span style={{
+              position: "absolute", top: -4, right: -4, width: 11, height: 11, borderRadius: 6,
+              background: COLORS.danger, color: "#fff", fontSize: 8, fontWeight: 800, lineHeight: "11px", textAlign: "center",
+            }}>!</span>
+          </span>
+          需要注意（嘔吐／精神低／便便異常／食量不足）
         </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 3, background: "#F6E8BE80", border: `1.5px solid ${COLORS.gold}` }} />要留意
-        </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 3, background: COLORS.dangerSoft, border: `1.5px solid ${COLORS.danger}` }} />需要注意
-        </span>
+        <span>格子顏色代表當天吃的飼料</span>
       </div>
     </div>
   );
@@ -2363,7 +2405,7 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
   const [monthOffset, setMonthOffset] = useState(0);
 
   const sorted = useMemo(() => [...records].sort((a, b) => b.date.localeCompare(a.date)), [records]);
-  const withFlags = useMemo(() => sorted.map((r) => ({ ...r, _flags: flagsForRecord(r, products), _level: dayLevel(r, products).level })), [sorted, products]);
+  const withFlags = useMemo(() => sorted.map((r) => ({ ...r, _level: dayLevel(r, products).level })), [sorted, products]);
   const flaggedCount = withFlags.filter((r) => r._level === 2).length;
   const searchActive = search.trim().length > 0 || onlyFlagged;
 
@@ -2872,8 +2914,8 @@ function HealthSummary({ records, products }) {
   else if (pct !== null) notes.push(`平均達成建議量 ${pct}%`);
   else notes.push(`平均每天 ${avg}g（此產品未設建議量）`);
   if (vomitDays > 0) notes.push(`${vomitDays} 天有嘔吐`);
+  // goldDays no longer exists — the period tier is decided by how many red days there are.
   if (tone.redDays > 0) notes.push(`${tone.redDays}／${days} 天需要注意`);
-  else if (tone.goldDays > 0) notes.push(`${tone.goldDays}／${days} 天要留意`);
   else notes.push("這段期間沒有異常");
 
   return (
@@ -3547,7 +3589,10 @@ function App() {
           {role === "owner" && (
             <Card style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink, marginBottom: 8 }}>今日用藥</div>
+              {/* Ticking only. Managing the preset list lives in the 用藥清單 tab, so the
+                  same controls don't appear in two places. */}
               <MedSection
+                hideHeader
                 date={todayStr()}
                 medPresets={medPresets}
                 medLogs={medLogs}
@@ -3555,7 +3600,6 @@ function App() {
                 onTogglePreset={(preset) => toggleMedPreset(todayStr(), preset)}
                 onAddManual={(entry) => addManualMedLog(todayStr(), entry)}
                 onRemoveLog={removeMedLog}
-                onManagePresets={() => setMedPresetsOpen(true)}
               />
             </Card>
           )}
