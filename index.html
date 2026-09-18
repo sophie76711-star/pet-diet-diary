@@ -1236,7 +1236,7 @@ function dayRating(record, product) {
   // flagsForRecord add an intake flag here would penalise the same thing twice.
   const flags = flagsForRecord(record);
   let score = 100;
-  if (ti) score -= ti.pct < 70 ? 30 : ti.pct < 90 ? 15 : ti.pct > 130 ? 12 : 0;
+  if (ti) score -= ti.pct < 65 ? 30 : ti.pct < 90 ? 15 : ti.pct > 130 ? 12 : 0;
   score -= Math.min(30, flags.length * 15); // each flag = vomit, low mood, or abnormal stool
   if (record.mental === 3) score -= 8; // not flagged, but "just okay" still counts a little
   score = Math.max(0, Math.min(100, score));
@@ -1418,8 +1418,8 @@ function targetInfo(record, products) {
   if (!target) return null;
   const total = record.breakfast + record.dinner + record.bedtime;
   const pct = Math.round((total / target) * 100);
-  const color = pct < 70 ? COLORS.danger : pct < 90 ? COLORS.gold : pct > 130 ? COLORS.gold : COLORS.accent;
-  const label = pct < 70 ? "明顯偏少" : pct < 90 ? "略偏少" : pct > 130 ? "偏多" : "達標";
+  const color = pct < 65 ? COLORS.danger : pct < 90 ? COLORS.gold : pct > 130 ? COLORS.gold : COLORS.accent;
+  const label = pct < 65 ? "明顯偏少" : pct < 90 ? "略偏少" : pct > 130 ? "偏多" : "達標";
   return { target, total, pct, color, label };
 }
 
@@ -2077,7 +2077,7 @@ function flagsForRecord(r, products = []) {
   // Eating far below target is exactly the kind of thing worth spotting on the calendar,
   // but it used to show only as live text while typing and never became a flag.
   const ti = targetInfo(r, products);
-  if (ti && ti.pct < 70) flags.push({ key: "intake", label: `食量偏少（${ti.pct}%）`, color: COLORS.danger });
+  if (ti && ti.pct < 65) flags.push({ key: "intake", label: `食量偏少（${ti.pct}%）`, color: COLORS.danger });
   else if (ti && ti.pct < 90) flags.push({ key: "intake", label: `食量略少（${ti.pct}%）`, color: COLORS.gold });
   else if (ti && ti.pct > 130) flags.push({ key: "intake", label: `食量偏多（${ti.pct}%）`, color: COLORS.gold });
   return flags;
@@ -2838,7 +2838,7 @@ function HealthSummary({ records, products }) {
 
   // Simple, explainable scoring: start at 100 and deduct for the things that matter
   let score = 100;
-  if (pct !== null) score -= pct < 70 ? 30 : pct < 85 ? 15 : pct > 130 ? 12 : 0;
+  if (pct !== null) score -= pct < 65 ? 30 : pct < 85 ? 15 : pct > 130 ? 12 : 0;
   score -= Math.min(30, Math.round((flaggedDays / days) * 60));
   score -= Math.min(20, vomitDays * 8);
   score = Math.max(0, Math.min(100, score));
