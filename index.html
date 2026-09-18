@@ -1230,21 +1230,56 @@ function Modal({ title, onClose, children, width = 560, footer, compact = false,
 // what's off), but scored against just this one record instead of a whole product period.
 // Kept separate from HealthSummary/hub scoring on purpose — the hub's period score stays
 // exactly as-is; this only feeds the per-day badge on the day detail page.
+// ---------- One severity scale for the whole app ----------
+// There used to be three overlapping judgements — the hub's period score, the day-detail
+// score, and the calendar's flag colours — each with its own thresholds. They could
+// disagree ("狀況穩定" on the hub while the calendar was all red). Everything now derives
+// from dayLevel() below, so one day has exactly one severity everywhere it appears.
+//
+// level: 0 = fine, 1 = worth watching (gold), 2 = needs attention (red)
+const LEVEL_META = [
+  { color: COLORS.accent, word: "狀況不錯", mood: 5 },
+  { color: COLORS.gold, word: "要留意", mood: 3 },
+  { color: COLORS.danger, word: "需要注意", mood: 1 },
+];
+
+// Returns { level, reasons } for one day. reasons are short human-readable strings, each
+// tagged with the level it contributed, so any screen can explain WHY a day is marked.
+function dayLevel(record, products = []) {
+  const reasons = [];
+  let level = 0;
+  const bump = (lv, text) => { reasons.push({ level: lv, text }); if (lv > level) level = lv; };
+
+  if (record.vomit > 0) bump(2, `嘔吐 ${record.vomit} 次`);
+  if (record.mental <= 2) bump(2, "精神偏低");
+  if (record.stool <= 2) bump(1, "便便偏硬");
+  if (record.stool >= 6) bump(1, "便便偏軟／腹瀉");
+
+  const ti = targetInfo(record, products);
+  if (ti) {
+    if (ti.pct < 65) bump(2, `食量偏少（${ti.pct}%）`);
+    else if (ti.pct < 90) bump(1, `食量略少（${ti.pct}%）`);
+    else if (ti.pct > 130) bump(1, `食量偏多（${ti.pct}%）`);
+  }
+  return { level, reasons, ...LEVEL_META[level] };
+}
+
+// Period view: same scale, aggregated. A period is as bad as its worst sustained pattern,
+// not the average — one red day in ten still matters clinically.
+function periodLevel(records, products = []) {
+  if (records.length === 0) return { level: 0, ...LEVEL_META[0], redDays: 0, goldDays: 0, days: 0 };
+  const levels = records.map((r) => dayLevel(r, products).level);
+  const redDays = levels.filter((l) => l === 2).length;
+  const goldDays = levels.filter((l) => l === 1).length;
+  const days = records.length;
+  // Red if attention-level days are frequent (>=20%) or there are several of them;
+  // gold if any red day happened at all, or watch-level days dominate.
+  const level = redDays / days >= 0.2 || redDays >= 3 ? 2 : (redDays > 0 || goldDays / days >= 0.4) ? 1 : 0;
+  return { level, ...LEVEL_META[level], redDays, goldDays, days };
+}
+
 function dayRating(record, product) {
-  const ti = targetInfo(record, product ? [product] : []);
-  // Deliberately without products: intake is scored on its own line below, so letting
-  // flagsForRecord add an intake flag here would penalise the same thing twice.
-  const flags = flagsForRecord(record);
-  let score = 100;
-  if (ti) score -= ti.pct < 65 ? 30 : ti.pct < 90 ? 15 : ti.pct > 130 ? 12 : 0;
-  score -= Math.min(30, flags.length * 15); // each flag = vomit, low mood, or abnormal stool
-  if (record.mental === 3) score -= 8; // not flagged, but "just okay" still counts a little
-  score = Math.max(0, Math.min(100, score));
-  return score >= 80
-    ? { score, color: COLORS.accent, word: "今天狀況不錯", mood: 5 }
-    : score >= 55
-      ? { score, color: COLORS.gold, word: "還可以，留意一下", mood: 3 }
-      : { score, color: COLORS.danger, word: "今天需要注意", mood: 1 };
+  return dayLevel(record, product ? [product] : []);
 }
 
 // ---------- Day Detail (read view, used by vet + as base for owner edit) ----------
@@ -2068,19 +2103,12 @@ function Dashboard({ records, products, role, existingDates, onSaveRecord, onDel
 // ---------- History ----------
 // products is optional: without it, intake can't be judged (the target lives on the
 // product), and the other checks still apply.
+// Thin wrapper kept for the screens that want a flag list rather than a level. Derived
+// from dayLevel so it can never disagree with the colours shown elsewhere.
 function flagsForRecord(r, products = []) {
-  const flags = [];
-  if (r.vomit > 0) flags.push({ key: "vomit", label: `嘔吐 ${r.vomit} 次`, color: COLORS.danger });
-  if (r.mental <= 2) flags.push({ key: "mental", label: "精神偏低", color: COLORS.danger });
-  if (r.stool <= 2) flags.push({ key: "stool", label: "便便偏硬", color: COLORS.gold });
-  if (r.stool >= 6) flags.push({ key: "stool", label: "便便偏軟／腹瀉", color: COLORS.gold });
-  // Eating far below target is exactly the kind of thing worth spotting on the calendar,
-  // but it used to show only as live text while typing and never became a flag.
-  const ti = targetInfo(r, products);
-  if (ti && ti.pct < 65) flags.push({ key: "intake", label: `食量偏少（${ti.pct}%）`, color: COLORS.danger });
-  else if (ti && ti.pct < 90) flags.push({ key: "intake", label: `食量略少（${ti.pct}%）`, color: COLORS.gold });
-  else if (ti && ti.pct > 130) flags.push({ key: "intake", label: `食量偏多（${ti.pct}%）`, color: COLORS.gold });
-  return flags;
+  return dayLevel(r, products).reasons.map((x, i) => ({
+    key: `r${i}`, label: x.text, color: LEVEL_META[x.level].color,
+  }));
 }
 
 // Traffic-light colors so severity reads instantly without doing math on the number
@@ -2102,13 +2130,16 @@ function StatPill({ tag, value, color }) {
 // One diary entry row — plain neutral border; only "abnormal" gets color, so red stays meaningful
 function RecordRow({ r, onSelect, selectMode, selected, onToggleSelect }) {
   const total = r.breakfast + r.dinner + r.bedtime;
-  const flagged = r._flags.length > 0;
+  // Same three-level scale as the calendar tiles.
+  const hasDanger = r._level === 2;
+  const flagged = hasDanger;
+  const hasWarn = r._level === 1;
   const note = [r.stress && `壓力：${r.stress}`, r.other && `備註：${r.other}`].filter(Boolean).join("　");
   return (
     <button onClick={() => (selectMode ? onToggleSelect(r.id) : onSelect(r.date))} style={{
       display: "flex", flexDirection: "column", width: "100%",
       textAlign: "left", padding: "10px 12px", borderRadius: 10,
-      border: `1.5px solid ${selectMode && selected ? COLORS.accent : flagged ? COLORS.danger : COLORS.line}`,
+      border: `1.5px solid ${selectMode && selected ? COLORS.accent : flagged ? COLORS.danger : hasWarn ? COLORS.gold : COLORS.line}`,
       background: flagged ? COLORS.dangerSoft : "#fff", cursor: "pointer",
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -2166,7 +2197,7 @@ function RecordRow({ r, onSelect, selectMode, selected, onToggleSelect }) {
 function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, onShiftMonth }) {
   const byDate = useMemo(() => {
     const m = new Map();
-    records.forEach((r) => m.set(r.date, { ...r, _flags: flagsForRecord(r, products) }));
+    records.forEach((r) => m.set(r.date, { ...r, _flags: flagsForRecord(r, products), _level: dayLevel(r, products).level }));
     return m;
   }, [records, products]);
 
@@ -2191,7 +2222,10 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
   const avg = monthRecords.length
     ? Math.round(monthRecords.reduce((sum, r) => sum + r.breakfast + r.dinner + r.bedtime, 0) / monthRecords.length)
     : 0;
-  const flaggedDays = monthRecords.filter((r) => r._flags.length > 0).length;
+  // Count only danger-level days as 異常, matching the red tiles. Gold days are reported
+  // separately so "18 天異常" can't be driven by mildly-under-target days.
+  const flaggedDays = monthRecords.filter((r) => r._level === 2).length;
+  const watchDays = monthRecords.filter((r) => r._level === 1).length;
 
   return (
     <div>
@@ -2205,6 +2239,7 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
           <div style={{ fontSize: 11, color: COLORS.inkSoft }}>
             {monthRecords.length} 天紀錄{monthRecords.length > 0 && `・平均 ${avg}g`}
             {flaggedDays > 0 && <span style={{ color: COLORS.danger, fontWeight: 600 }}>・{flaggedDays} 天異常</span>}
+            {watchDays > 0 && <span style={{ color: COLORS.gold, fontWeight: 600 }}>・{watchDays} 天要留意</span>}
           </div>
         </div>
         <button onClick={() => onShiftMonth(1)} disabled={monthOffset >= 0} aria-label="下個月" style={{
@@ -2238,36 +2273,30 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
         {cells.map((d, i) => {
           if (d === null) return <div key={`x${i}`} />;
           const r = byDate.get(iso(d));
-          const flagged = r && r._flags.length > 0;
+          // One signal per tile. This grid answers "which days need a closer look?", so it
+          // carries severity and nothing else — the three status dots and the target-tinted
+          // gram colour used to pack five channels into a ~45px square that had to be
+          // decoded against a legend. Everything removed here is still on the day page.
+          const lv = r ? r._level : 0;
           const total = r ? r.breakfast + r.dinner + r.bedtime : null;
+          const tint = lv === 2 ? COLORS.dangerSoft : lv === 1 ? "#F6E8BE80" : r ? "#fff" : onCreateDate ? "#FAFAF7" : "transparent";
+          const edge = lv === 2 ? COLORS.danger : lv === 1 ? COLORS.gold : r ? COLORS.line : onCreateDate ? COLORS.line : "transparent";
           return (
             <button
               key={d}
               onClick={() => (r ? onSelect(r.date) : onCreateDate && onCreateDate(iso(d)))}
               disabled={!r && !onCreateDate}
-              aria-label={r ? `查看 ${iso(d)} 的紀錄` : onCreateDate ? `新增 ${iso(d)} 的紀錄` : undefined}
+              aria-label={r ? `查看 ${iso(d)} 的紀錄${lv === 2 ? "（需要注意）" : lv === 1 ? "（要留意）" : ""}` : onCreateDate ? `新增 ${iso(d)} 的紀錄` : undefined}
               style={{
                 aspectRatio: "1 / 1", borderRadius: 12, padding: 2,
-                // Tile tint = which food that day; red outline = abnormal. The two are separate
-                // channels so you can see feed changes and problem days at the same time.
-                border: `1.5px solid ${flagged ? COLORS.danger : r ? swatch(prodOf(r)?.color).border + "66" : onCreateDate ? COLORS.line : "transparent"}`,
-                background: flagged ? COLORS.dangerSoft : r ? swatch(prodOf(r)?.color).bg : onCreateDate ? "#FAFAF7" : "transparent",
+                border: `1.5px solid ${edge}`,
+                background: tint,
                 cursor: r || onCreateDate ? "pointer" : "default",
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1,
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
               }}
             >
-              <span className="cal-day" style={{ fontSize: 12, fontWeight: 700, color: r ? COLORS.ink : COLORS.line }}>{d}</span>
-              {r && (() => {
-                const ti = targetInfo(r, products);
-                return <span className="cal-grams" style={{ fontSize: 9, lineHeight: 1, fontWeight: ti ? 700 : 400, color: ti ? ti.color : COLORS.inkSoft }}>{total}g</span>;
-              })()}
-              {r && (
-                <span className="cal-dots" style={{ display: "flex", gap: 2, marginTop: 1 }}>
-                  <span style={{ width: 5, height: 5, borderRadius: 3, background: mentalColor(r.mental) }} />
-                  <span style={{ width: 5, height: 5, borderRadius: 3, background: stoolColor(r.stool) }} />
-                  {r.vomit > 0 && <span style={{ width: 5, height: 5, borderRadius: 3, background: COLORS.danger }} />}
-                </span>
-              )}
+              <span className="cal-day" style={{ fontSize: 13, fontWeight: 700, color: r ? COLORS.ink : COLORS.line }}>{d}</span>
+              {r && <span className="cal-grams" style={{ fontSize: 10, lineHeight: 1, fontWeight: 600, color: COLORS.inkSoft }}>{total}g</span>}
             </button>
           );
         })}
@@ -2298,16 +2327,16 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
       })()}
 
       <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 10, fontSize: 11, color: COLORS.inkSoft, flexWrap: "wrap" }}>
+        {/* Three states, matching the tiles exactly — no dot-order key to memorise. */}
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.accent }} />正常
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: "#fff", border: `1.5px solid ${COLORS.line}` }} />正常
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.gold }} />要留意
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: "#F6E8BE80", border: `1.5px solid ${COLORS.gold}` }} />要留意
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.danger }} />異常
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: COLORS.dangerSoft, border: `1.5px solid ${COLORS.danger}` }} />需要注意
         </span>
-        <span>圓點依序為 精神・便便・嘔吐</span>
       </div>
     </div>
   );
@@ -2334,8 +2363,8 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
   const [monthOffset, setMonthOffset] = useState(0);
 
   const sorted = useMemo(() => [...records].sort((a, b) => b.date.localeCompare(a.date)), [records]);
-  const withFlags = useMemo(() => sorted.map((r) => ({ ...r, _flags: flagsForRecord(r, products) })), [sorted, products]);
-  const flaggedCount = withFlags.filter((r) => r._flags.length > 0).length;
+  const withFlags = useMemo(() => sorted.map((r) => ({ ...r, _flags: flagsForRecord(r, products), _level: dayLevel(r, products).level })), [sorted, products]);
+  const flaggedCount = withFlags.filter((r) => r._level === 2).length;
   const searchActive = search.trim().length > 0 || onlyFlagged;
 
   // Group by product period — the period/average/abnormal-count is stated once in the
@@ -2351,10 +2380,10 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
       const product = products.find((x) => x.id === productId);
       const dates = recs.map((r) => r.date).sort();
       const avg = Math.round(recs.reduce((s, r) => s + r.breakfast + r.dinner + r.bedtime, 0) / recs.length);
-      const groupFlagged = recs.filter((r) => r._flags.length > 0).length;
+      const groupFlagged = recs.filter((r) => r._level === 2).length;
       const visible = recs
         .filter((r) => r.date.includes(search))
-        .filter((r) => !onlyFlagged || r._flags.length > 0)
+        .filter((r) => !onlyFlagged || r._level === 2)
         .sort((a, b) => b.date.localeCompare(a.date));
       return { productId, product, startDate: dates[0], endDate: dates[dates.length - 1], avg, groupFlagged, count: recs.length, visible };
     });
@@ -2829,33 +2858,22 @@ function HealthSummary({ records, products }) {
 
   const days = inPeriod.length;
   const avg = Math.round(inPeriod.reduce((sum, r) => sum + r.breakfast + r.dinner + r.bedtime, 0) / days);
-  // Also without products, for the same reason: this summary reports average intake as its
-  // own figure, so intake must not additionally inflate the abnormal-day count.
-  const flaggedDays = inPeriod.filter((r) => flagsForRecord(r).length > 0).length;
   const vomitDays = inPeriod.filter((r) => r.vomit > 0).length;
   const target = current?.dailyTarget || null;
   const pct = target ? Math.round((avg / target) * 100) : null;
 
-  // Simple, explainable scoring: start at 100 and deduct for the things that matter
-  let score = 100;
-  if (pct !== null) score -= pct < 65 ? 30 : pct < 85 ? 15 : pct > 130 ? 12 : 0;
-  score -= Math.min(30, Math.round((flaggedDays / days) * 60));
-  score -= Math.min(20, vomitDays * 8);
-  score = Math.max(0, Math.min(100, score));
-
-  const tone = score >= 80
-    ? { color: COLORS.accent, word: "狀況穩定", mood: 5 }
-    : score >= 60
-      ? { color: COLORS.gold, word: "還可以，留意一下", mood: 3 }
-      : { color: COLORS.danger, word: "需要注意", mood: 1 };
+  // Same scale as every day tile and the day-detail badge — no separate 0-100 score that
+  // could contradict them.
+  const tone = periodLevel(inPeriod, products);
 
   const notes = [];
-  if (pct !== null && pct < 85) notes.push(`平均只吃到建議量的 ${pct}%`);
+  if (pct !== null && pct < 90) notes.push(`平均只吃到建議量的 ${pct}%`);
   else if (pct !== null && pct > 130) notes.push(`平均超過建議量 ${pct}%`);
   else if (pct !== null) notes.push(`平均達成建議量 ${pct}%`);
   else notes.push(`平均每天 ${avg}g（此產品未設建議量）`);
   if (vomitDays > 0) notes.push(`${vomitDays} 天有嘔吐`);
-  if (flaggedDays > 0) notes.push(`${flaggedDays}／${days} 天有異常`);
+  if (tone.redDays > 0) notes.push(`${tone.redDays}／${days} 天需要注意`);
+  else if (tone.goldDays > 0) notes.push(`${tone.goldDays}／${days} 天要留意`);
   else notes.push("這段期間沒有異常");
 
   return (
@@ -2864,8 +2882,7 @@ function HealthSummary({ records, products }) {
         <CatMoodIcon score={tone.mood} size={42} color={tone.color} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 22, fontWeight: 800, color: tone.color, lineHeight: 1.1 }}>{score}</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: COLORS.ink }}>{tone.word}</span>
+            <span style={{ fontSize: 17, fontWeight: 800, color: tone.color, lineHeight: 1.1 }}>{tone.word}</span>
           </div>
           <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 2 }}>
             {current ? `${current.name}・${days} 天` : `最近 ${days} 天`}
