@@ -158,7 +158,14 @@ const PALETTE = [
 ];
 
 const swatch = (key) => PALETTE.find((p) => p.key === key) || PALETTE[0];
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const displayToday = (date) => {
+  const [year, month, day] = date.split("-").map(Number);
+  return `${year} 年 ${month} 月 ${day} 日・星期${"日一二三四五六"[new Date(year, month - 1, day).getDay()]}`;
+};
 const uid = () => Math.random().toString(36).slice(2, 10);
 const fmtMD = (ts) => {
   const d = new Date(ts);
@@ -818,21 +825,32 @@ function defaultProductForDate(products, date) {
 }
 
 // ---------- Record Form (used for add / edit) ----------
-function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions, onDirtyChange, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
-  const [date, setDate] = useState(initial?.date || todayStr());
-  const [productId, setProductId] = useState(initial?.productId || defaultProductForDate(products, initial?.date || todayStr()));
+const recordDraftKey = (id) => `cat-diet-record-draft:${id}`;
+function clearRecordDraft(id) {
+  try { localStorage.removeItem(recordDraftKey(id)); } catch (e) { /* private mode */ }
+}
+function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions, onDirtyChange, draftId, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+  const draftIdentity = draftId || initial?.id || "new";
+  const draft = useMemo(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(recordDraftKey(draftIdentity)) || "null");
+      return value && value.version === 1 && value.recordId === (initial?.id || null) ? value.fields : null;
+    } catch (e) { return null; }
+  }, [draftIdentity, initial?.id]);
+  const [date, setDate] = useState(draft?.date ?? initial?.date ?? todayStr());
+  const [productId, setProductId] = useState(draft?.productId ?? initial?.productId ?? defaultProductForDate(products, initial?.date || todayStr()));
   // Once the food is picked by hand, changing the date must not silently re-pick it.
-  const productTouched = useRef(!!initial?.productId);
-  const [breakfast, setBreakfast] = useState(initial?.breakfast ?? 0);
-  const [dinner, setDinner] = useState(initial?.dinner ?? 0);
-  const [bedtime, setBedtime] = useState(initial?.bedtime ?? 0);
-  const [mental, setMental] = useState(initial?.mental ?? 3);
-  const [stool, setStool] = useState(initial?.stool ?? 4);
-  const [vomit, setVomit] = useState(initial?.vomit ?? 0);
-  const [other, setOther] = useState(initial?.other || "");
-  const [photos, setPhotos] = useState(initial?.photos || []);
+  const productTouched = useRef(!!draft?.productId || !!initial?.productId);
+  const [breakfast, setBreakfast] = useState(draft?.breakfast ?? initial?.breakfast ?? 0);
+  const [dinner, setDinner] = useState(draft?.dinner ?? initial?.dinner ?? 0);
+  const [bedtime, setBedtime] = useState(draft?.bedtime ?? initial?.bedtime ?? 0);
+  const [mental, setMental] = useState(draft?.mental ?? initial?.mental ?? 3);
+  const [stool, setStool] = useState(draft?.stool ?? initial?.stool ?? 4);
+  const [vomit, setVomit] = useState(draft?.vomit ?? initial?.vomit ?? 0);
+  const [other, setOther] = useState(draft?.other ?? initial?.other ?? "");
+  const [photos, setPhotos] = useState(draft?.photos ?? initial?.photos ?? []);
   const [photoBusy, setPhotoBusy] = useState(false);
-  const [stress, setStress] = useState(initial?.stress || "");
+  const [stress, setStress] = useState(draft?.stress ?? initial?.stress ?? "");
   const [error, setError] = useState("");
   const [addingProduct, setAddingProduct] = useState(false);
   const [newProductName, setNewProductName] = useState("");
@@ -871,6 +889,15 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
     photos.length !== base.photos.length || photos.some((p, i) => p !== base.photos[i]);
 
   useEffect(() => { if (onDirtyChange) onDirtyChange(dirty); }, [dirty]); // eslint-disable-line
+  useEffect(() => {
+    if (!dirty) return;
+    try {
+      localStorage.setItem(recordDraftKey(draftIdentity), JSON.stringify({
+        version: 1, recordId: initial?.id || null,
+        fields: { date, productId, breakfast, dinner, bedtime, mental, stool, vomit, other, stress, photos },
+      }));
+    } catch (e) { /* private mode or storage full */ }
+  }, [draftIdentity, dirty, date, productId, breakfast, dinner, bedtime, mental, stool, vomit, other, stress, photos]);
   // Report "clean" on unmount so a stale dirty flag can't block the next screen.
   useEffect(() => () => { if (onDirtyChange) onDirtyChange(false); }, []); // eslint-disable-line
 
@@ -881,6 +908,7 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
       return;
     }
     if (!productId) { setError("請選擇當天食用的產品，或用上面的「＋ 新增產品」直接建立一個。"); return; }
+    clearRecordDraft(draftIdentity);
     onSave({
       id: initial?.id || uid(),
       date, productId,
@@ -1229,15 +1257,38 @@ function ProductForm({ initial, onSave, onCancel, onDelete, onDirtyChange }) {
 // compact=true renders a small centred dialog instead of the full-height sheet. The sheet
 // layout exists for long forms; a one-line confirmation filling the whole screen reads as a
 // page change rather than a question, so confirmations use the compact form.
+// Keep nested confirmations from sending a second Back to the editor underneath.
+const modalLayers = [];
+const ignoredModalPopEvents = new WeakSet();
+let pendingModalCleanupPops = 0;
 function Modal({ title, onClose, children, width = 560, footer, compact = false, zIndex = 50 }) {
-  // Close on the hardware/gesture back action so it behaves like a real page
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
-    window.history.pushState({ modal: true }, "");
-    const onPop = () => onClose();
+    const token = Math.random().toString(36).slice(2);
+    modalLayers.push(token);
+    window.history.pushState({ modal: token }, "");
+    const onPop = (event) => {
+      if (ignoredModalPopEvents.has(event)) return;
+      if (pendingModalCleanupPops > 0) {
+        pendingModalCleanupPops--;
+        ignoredModalPopEvents.add(event);
+        return;
+      }
+      if (modalLayers[modalLayers.length - 1] !== token) return;
+      // A dirty editor may keep this modal open while showing its confirmation.
+      window.history.pushState({ modal: token }, "");
+      closeRef.current();
+    };
     window.addEventListener("popstate", onPop);
     return () => {
       window.removeEventListener("popstate", onPop);
-      if (window.history.state && window.history.state.modal) window.history.back();
+      const index = modalLayers.lastIndexOf(token);
+      if (index !== -1) modalLayers.splice(index, 1);
+      if (window.history.state?.modal === token) {
+        pendingModalCleanupPops++;
+        window.history.back();
+      }
     };
   }, []); // eslint-disable-line
 
@@ -1539,7 +1590,7 @@ function DayPanelBody({ record, product, role, products, existingDates, onSave, 
   // Same unsaved-changes guard as the add form: only prompt if something was edited.
   const editDirty = useRef(false);
   const clearDirty = () => { editDirty.current = false; if (onDirtyChange) onDirtyChange(false); };
-  const leaveEdit = () => { clearDirty(); setEditing(false); };
+  const leaveEdit = () => { clearRecordDraft(record.id); clearDirty(); setEditing(false); };
   const cancelEditGuarded = () => {
     if (!editDirty.current || !onConfirm) { leaveEdit(); return; }
     onConfirm({ message: "修改還沒儲存，離開的話剛剛的變更會不見。確定要離開嗎？", onYes: leaveEdit });
@@ -2429,7 +2480,7 @@ function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, 
   );
 }
 
-function History({ records, products, onSelect, onDeleteMany, onConfirm, role, existingDates, onAddRecord, onQuickAddProduct, onAddProduct, onEditProduct, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function History({ records, products, petId, onSelect, onDeleteMany, onConfirm, role, existingDates, onAddRecord, onQuickAddProduct, onAddProduct, onEditProduct, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [search, setSearch] = useState("");
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [manualOpen, setManualOpen] = useState({}); // productId -> explicit true/false, overrides the default
@@ -2440,7 +2491,7 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
   // Leaving a half-filled form used to discard it without a word. Confirm first, but only
   // when something was actually entered — an untouched form closes straight away.
   const addDirty = useRef(false);
-  const closeAdd = () => { addDirty.current = false; setAddOpen(false); setAddDate(null); };
+  const closeAdd = () => { clearRecordDraft(`new:${petId}`); addDirty.current = false; setAddOpen(false); setAddDate(null); };
   const closeAddGuarded = () => {
     if (!addDirty.current) { closeAdd(); return; }
     onConfirm({ message: "這筆紀錄還沒儲存，離開的話剛剛填的內容會不見。確定要離開嗎？", onYes: closeAdd });
@@ -2666,6 +2717,7 @@ function History({ records, products, onSelect, onDeleteMany, onConfirm, role, e
         <Modal title="新增紀錄" onClose={closeAddGuarded} footer={addActions}>
           <RecordForm
             initial={addDate ? { date: addDate } : undefined}
+            draftId={`new:${petId}`}
             products={products}
             existingDates={existingDates}
             onSave={(rec) => { onAddRecord(rec); addDirty.current = false; setAddOpen(false); setAddDate(null); }}
@@ -3147,6 +3199,20 @@ function PetForm({ initial, canDelete, onSave, onDelete, onCancel }) {
 
 // ---------- Main App ----------
 function App() {
+  const [currentDay, setCurrentDay] = useState(todayStr);
+  useEffect(() => {
+    let timer;
+    const refreshDay = () => {
+      clearTimeout(timer);
+      setCurrentDay(todayStr());
+      const nextMidnight = new Date();
+      nextMidnight.setHours(24, 0, 0, 0);
+      timer = setTimeout(refreshDay, Math.max(1000, nextMidnight.getTime() - Date.now() + 50));
+    };
+    refreshDay();
+    document.addEventListener("visibilitychange", refreshDay);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", refreshDay); };
+  }, []);
   const [screen, setScreen] = useState("landing"); // 'landing' | 'pets' | 'app'
   const [role, setRole] = useState("owner"); // 'owner' | 'vet'
   const [tab, setTab] = useState(null); // null = layer-2 hub menu; a key = layer-3 section detail
@@ -3170,7 +3236,11 @@ function App() {
   // The day panel's 返回 lives in the Modal header, outside the edit form — so the form's
   // unsaved state has to be lifted here or leaving that way silently discards the edit.
   const dayEditDirty = useRef(false);
-  const closeDayPanel = () => { dayEditDirty.current = false; setModal(null); };
+  const closeDayPanel = () => {
+    if (modal?.type === "dayPanel") clearRecordDraft(modal.payload.id);
+    dayEditDirty.current = false;
+    setModal(null);
+  };
   const closeDayPanelGuarded = () => {
     if (!dayEditDirty.current) { closeDayPanel(); return; }
     setConfirmDialog({ message: "修改還沒儲存，離開的話剛剛的變更會不見。確定要離開嗎？", onYes: closeDayPanel });
@@ -3469,8 +3539,8 @@ function App() {
           <Modal title="請確認" compact zIndex={100} onClose={() => setConfirmDialog(null)}>
             <div style={{ fontSize: 14, color: COLORS.ink, lineHeight: 1.6, marginBottom: 20 }}>{confirmDialog.message}</div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>取消</Btn>
-              <Btn variant="danger" onClick={() => { confirmDialog.onYes(); setConfirmDialog(null); }}>確定</Btn>
+              <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>{confirmDialog.message.includes("還沒儲存") ? "繼續編輯" : "取消"}</Btn>
+              <Btn variant="danger" onClick={() => { confirmDialog.onYes(); setConfirmDialog(null); }}>{confirmDialog.message.includes("還沒儲存") ? "放棄修改" : "確定"}</Btn>
             </div>
           </Modal>
         )}
@@ -3555,6 +3625,11 @@ function App() {
               ? <span style={{ color: COLORS.ink, fontWeight: 700 }}>{TAB_META[tab]?.label}</span>
               : (role === "owner" ? "主人模式" : "醫師模式（唯讀）")}
           </div>
+          <div style={{ display: "inline-block", marginTop: 10, padding: "7px 12px", borderRadius: 10,
+            background: COLORS.card, border: `1px solid ${COLORS.line}`, color: COLORS.ink,
+            fontSize: 13, fontWeight: 700, boxShadow: COLORS.shadow }}>
+            今天・{displayToday(currentDay)}
+          </div>
           {role === "owner" && (
             <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 2 }}>
               {vetViewedAt ? `醫師最後查看：${formatRelativeTime(vetViewedAt)}` : "醫師尚未查看過"}
@@ -3619,12 +3694,12 @@ function App() {
                   same controls don't appear in two places. */}
               <MedSection
                 hideHeader
-                date={todayStr()}
+                date={currentDay}
                 medPresets={medPresets}
                 medLogs={medLogs}
                 role={role}
-                onTogglePreset={(preset) => toggleMedPreset(todayStr(), preset)}
-                onAddManual={(entry) => addManualMedLog(todayStr(), entry)}
+                onTogglePreset={(preset) => toggleMedPreset(currentDay, preset)}
+                onAddManual={(entry) => addManualMedLog(currentDay, entry)}
                 onRemoveLog={removeMedLog}
               />
             </Card>
@@ -3670,7 +3745,7 @@ function App() {
             )}
             {tab === "history" && (
               <History
-                records={records} products={products} onSelect={openDayByDate}
+                records={records} products={products} petId={petId} onSelect={openDayByDate}
                 onDeleteMany={deleteRecords} onConfirm={setConfirmDialog}
                 role={role} existingDates={existingDates}
                 onAddRecord={role === "owner" ? saveRecord : undefined}
@@ -3771,8 +3846,8 @@ function App() {
         <Modal title="請確認" compact zIndex={100} onClose={() => setConfirmDialog(null)}>
           <div style={{ fontSize: 14, color: COLORS.ink, lineHeight: 1.6, marginBottom: 20 }}>{confirmDialog.message}</div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-            <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>取消</Btn>
-            <Btn variant="danger" onClick={() => { confirmDialog.onYes(); setConfirmDialog(null); }}>確定</Btn>
+            <Btn variant="ghost" onClick={() => setConfirmDialog(null)}>{confirmDialog.message.includes("還沒儲存") ? "繼續編輯" : "取消"}</Btn>
+            <Btn variant="danger" onClick={() => { confirmDialog.onYes(); setConfirmDialog(null); }}>{confirmDialog.message.includes("還沒儲存") ? "放棄修改" : "確定"}</Btn>
           </div>
         </Modal>
       )}
