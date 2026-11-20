@@ -2973,56 +2973,84 @@ function ExportPanel({ records, products, petName }) {
 }
 
 
-// ---------- Health summary shown on the hub screen ----------
-// Scores the current product period: intake vs its target, abnormal days, vomiting.
-function HealthSummary({ records, products }) {
-  if (records.length === 0) return null;
-
-  const latestDate = records.reduce((m, r) => (r.date > m ? r.date : m), records[0].date);
-  const current = products.find((p) => {
-    const s = toTs(p.startDate), e = p.endDate ? toTs(p.endDate) : Infinity;
-    return toTs(latestDate) >= s && toTs(latestDate) <= e;
-  }) || products.find((p) => !p.endDate);
-  const inPeriod = current
-    ? records.filter((r) => r.productId === current.id)
-    : records.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14);
-  if (inPeriod.length === 0) return null;
-
-  const days = inPeriod.length;
-  const avg = Math.round(inPeriod.reduce((sum, r) => sum + r.breakfast + r.dinner + r.bedtime, 0) / days);
-  const vomitDays = inPeriod.filter((r) => r.vomit > 0).length;
-  const target = current?.dailyTarget || null;
-  const pct = target ? Math.round((avg / target) * 100) : null;
-
-  // Same scale as every day tile and the day-detail badge — no separate 0-100 score that
-  // could contradict them.
-  const tone = periodLevel(inPeriod, products);
-
-  const notes = [];
-  if (pct !== null && pct < 90) notes.push(`平均只吃到建議量的 ${pct}%`);
-  else if (pct !== null && pct > 130) notes.push(`平均超過建議量 ${pct}%`);
-  else if (pct !== null) notes.push(`平均達成建議量 ${pct}%`);
-  else notes.push(`平均每天 ${avg}g（此產品未設建議量）`);
-  if (vomitDays > 0) notes.push(`${vomitDays} 天有嘔吐`);
-  if (tone.flaggedDays > 0) notes.push(`${tone.flaggedDays}／${days} 天需留意`);
-  else notes.push("這段期間沒有異常");
-
+// ---------- Evidence-based food trial analysis (computed locally, no extra cloud writes) ----------
+function HealthSummary({ records, products, medLogs = [] }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState("");
+  const [windowDays, setWindowDays] = useState(14);
+  if (!records.length) return null;
+  const ordered = records.slice().filter(r => r.date).sort((a,b)=>a.date.localeCompare(b.date));
+  const ids = [...new Set(ordered.map(r=>r.productId).filter(Boolean))];
+  const options = ids.map(id => ({ id, name: products.find(p=>p.id===id)?.name || "未命名飼料" }));
+  const chosen = ids.includes(selected) ? selected : ordered[ordered.length-1].productId;
+  const trial = ordered.filter(r => r.productId === chosen);
+  if (!trial.length) return null;
+  const productName = options.find(o=>o.id===chosen)?.name || "目前飼料";
+  const target = Number(products.find(p=>p.id===chosen)?.dailyTarget) || 0;
+  const n = trial.length;
+  const sumFood = r => (Number(r.breakfast)||0)+(Number(r.dinner)||0)+(Number(r.bedtime)||0);
+  const avg = arr => arr.length ? arr.reduce((a,r)=>a+sumFood(r),0)/arr.length : 0;
+  const vomit = arr => arr.filter(r=>Number(r.vomit)>0).length;
+  const hard = arr => arr.filter(r=>Number(r.stool)>0 && Number(r.stool)<=2).length;
+  const soft = arr => arr.filter(r=>Number(r.stool)>=6).length;
+  const stressed = arr => arr.filter(r=>String(r.stress||"").trim()).length;
+  const notes = arr => arr.filter(r=>String(r.other||"").trim()).length;
+  const pct = target ? Math.round(avg(trial)/target*100) : null;
+  const last = trial.slice(-windowDays), previous = trial.slice(-windowDays*2,-windowDays);
+  const diff = previous.length ? Math.round(avg(last)-avg(previous)) : null;
+  const rate = (x,y) => y.length ? Math.round(x(y)/y.length*100) : 0;
+  // A descriptive tracking index, NOT a disease severity or validated clinical score.
+  const score = arr => {
+    if (!arr.length) return null;
+    const intake = target ? Math.min(1,avg(arr)/target) : null;
+    const parts = [
+      ...(intake===null?[]:[{weight:30,value:intake}]),
+      {weight:25,value:1-vomit(arr)/arr.length},
+      {weight:25,value:1-(hard(arr)+soft(arr))/arr.length},
+      {weight:20,value:arr.filter(r=>Number(r.mental)>0 && Number(r.mental)<=2).length ? 1-arr.filter(r=>Number(r.mental)>0 && Number(r.mental)<=2).length/arr.length : 1}
+    ];
+    return Math.round(100*parts.reduce((a,p)=>a+p.weight*p.value,0)/parts.reduce((a,p)=>a+p.weight,0));
+  };
+  const latestScore = score(last), priorScore = score(previous);
+  const medDays = new Set(medLogs.filter(l=>trial.some(r=>r.date===l.date)).map(l=>l.date));
+  const patterns = [];
+  if (pct!==null && pct<90) patterns.push(`平均進食量為目標的 ${pct}%，建議留意是否持續不足。`);
+  if (vomit(trial)) patterns.push(`${n} 個紀錄日中，${vomit(trial)} 天記錄嘔吐（${rate(vomit,trial)}%）。`);
+  if (hard(trial)||soft(trial)) patterns.push(`便便偏硬 ${hard(trial)} 天、偏軟 ${soft(trial)} 天；請對照軟便劑及其他用藥變動。`);
+  if (previous.length) patterns.push(`最近 ${last.length} 個同飼料紀錄日，平均每日 ${avg(last).toFixed(1)}g；前 ${previous.length} 個紀錄日 ${avg(previous).toFixed(1)}g（${diff>0?"增加":"變化"} ${Math.abs(diff)}g）。`);
+  if (stressed(trial)) patterns.push(`${stressed(trial)} 天記有壓力事件；可對照事件當天及之後的食慾與症狀，但不能據此認定因果。`);
+  if (medDays.size) patterns.push(`此飼料期間有 ${medDays.size} 天留下用藥完成紀錄；勾選紀錄不能代表未勾選時一定未服藥。`);
+  const commentExamples = trial.filter(r=>r.other||r.stress).slice(-3).reverse();
+  const stressDays = trial.filter(r=>String(r.stress||"").trim());
+  const stressIntake = stressDays.length ? avg(stressDays) : null;
+  const noStress = trial.filter(r=>!String(r.stress||"").trim());
+  const tone = periodLevel(trial,products);
   return (
-    <Card style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <CatMoodIcon score={tone.mood} size={42} color={tone.color} />
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 17, fontWeight: 800, color: tone.color, lineHeight: 1.1 }}>{tone.word}</span>
-          </div>
-          <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 2 }}>
-            {current ? `${current.name}・${days} 天` : `最近 ${days} 天`}
-          </div>
-        </div>
+    <Card style={{ marginBottom:12 }}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+        <div style={{fontSize:24}}>✦</div>
+        <div style={{flex:1,minWidth:0}}><div style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>AI 分析診斷</div><div style={{fontSize:11,color:COLORS.inkSoft}}>飲食試驗資料分析 · 非臨床診斷</div></div>
+        <span style={{fontSize:12,color:tone.color,fontWeight:700}}>{tone.word}</span>
       </div>
-      <div style={{ fontSize: 12, color: COLORS.ink, lineHeight: 1.7, marginTop: 10 }}>
-        {notes.join("・")}
+      <select value={chosen||""} onChange={e=>setSelected(e.target.value)} style={{...inputStyle,width:"100%",marginBottom:12}}>
+        {options.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+        <div style={{background:COLORS.accentSoft,borderRadius:12,padding:12}}><div style={{fontSize:11,color:COLORS.inkSoft}}>近期紀錄指標</div><div style={{fontSize:23,fontWeight:800,color:COLORS.accent}}>{latestScore}<span style={{fontSize:12,fontWeight:400}}> / 100</span></div><div style={{fontSize:11,color:COLORS.inkSoft}}>{priorScore!==null?`較前期 ${latestScore-priorScore>=0?"+":""}${latestScore-priorScore} 分`:"前期資料不足"}</div></div>
+        <div style={{background:COLORS.accentSoft,borderRadius:12,padding:12}}><div style={{fontSize:11,color:COLORS.inkSoft}}>同飼料觀察</div><div style={{fontSize:23,fontWeight:800,color:COLORS.accent}}>{n}<span style={{fontSize:12,fontWeight:400}}> 天</span></div><div style={{fontSize:11,color:COLORS.inkSoft}}>嘔吐 {vomit(trial)} 天 · 壓力 {stressed(trial)} 天</div></div>
       </div>
+      <div style={{fontSize:13,lineHeight:1.8,color:COLORS.ink}}>{patterns.slice(0,2).join(" ") || `目前 ${productName} 共 ${n} 個紀錄日，尚無足夠的異常訊號可作進一步推論。`}</div>
+      <button type="button" onClick={()=>setOpen(!open)} style={{width:"100%",marginTop:12,border:`1px solid ${COLORS.line}`,borderRadius:10,padding:10,background:"#fff",color:COLORS.accent,fontWeight:700,cursor:"pointer"}}>{open?"收起完整分析":"查看完整分析與比較"} {open?"⌃":"⌄"}</button>
+      {open && <div style={{marginTop:14,fontSize:13,color:COLORS.ink,lineHeight:1.8}}>
+        <div style={{display:"flex",gap:8,marginBottom:12}}>{[7,14,30].map(x=><button key={x} type="button" onClick={()=>setWindowDays(x)} style={{flex:1,border:`1px solid ${COLORS.line}`,borderRadius:8,padding:7,background:windowDays===x?COLORS.accentSoft:"#fff",color:COLORS.ink}}>{x} 個紀錄日</button>)}</div>
+        <div style={{fontWeight:700,marginBottom:6}}>近期與前期</div>
+        <div>近期平均 {avg(last).toFixed(1)}g／天；前期 {previous.length?`${avg(previous).toFixed(1)}g／天`:"資料不足"}。近期嘔吐 {vomit(last)} 天，前期 {previous.length?`${vomit(previous)} 天`:"資料不足"}。</div>
+        <div style={{fontWeight:700,marginTop:12,marginBottom:6}}>綜合觀察</div>
+        {patterns.map((x,i)=><div key={i} style={{marginBottom:5}}>• {x}</div>)}
+        <div style={{marginTop:10}}>備註紀錄 {notes(trial)} 天；壓力事件 {stressed(trial)} 天。{stressIntake!==null&&noStress.length?`有記壓力的日子平均 ${stressIntake.toFixed(1)}g，未記壓力的日子平均 ${avg(noStress).toFixed(1)}g；未記錄不代表沒有壓力。`:"壓力資料尚不足以比較。"}</div>
+        {commentExamples.length>0&&<><div style={{fontWeight:700,marginTop:12}}>最近相關備註</div>{commentExamples.map((r,i)=><div key={i} style={{padding:"7px 0",borderBottom:`1px solid ${COLORS.line}`,overflowWrap:"anywhere"}}><span style={{color:COLORS.inkSoft}}>{r.date}　</span>{r.stress?`壓力：${r.stress}　`:""}{r.other?`備註：${r.other}`:""}</div>)}</>}
+        <div style={{marginTop:12,padding:10,background:COLORS.accentSoft,borderRadius:10,fontSize:12}}>指標為自動統計，不是經驗證的醫療評分；備註目前展示原文，尚未接入大型語言模型做語意推理。不同飼料、混餵、用藥與紀錄缺漏可能干擾比較，不能據此確診過敏或疾病。</div>
+      </div>}
     </Card>
   );
 }
@@ -3733,7 +3761,7 @@ function App() {
         ) : tab === null ? (
           // ---- Layer 2: hub menu — health summary, then hand-drawn icon tiles ----
           <>
-          <HealthSummary records={records} products={products} />
+          <HealthSummary records={records} products={products} medLogs={medLogs} />
           {role === "owner" && (
             <Card style={{ marginBottom: 14 }}>
               <TodayMedicationList date={currentDay} medPresets={medPresets} medLogs={medLogs} role={role} onToggle={(preset,index)=>toggleMedPreset(currentDay,preset,index)}/>
