@@ -628,6 +628,52 @@ function BristolPlaceholder({ compact }) {
 // deleting a preset later never rewrites history that's already been shown to a vet. Ad
 // hoc entries (something one-off, not worth saving as a preset) skip presets entirely —
 // covers "the medication is different basically every time."
+// Medication schedules: legacy presets without a start date remain active daily.
+function medDue(p, date) {
+  if (p.startDate && date < p.startDate) return false;
+  if (p.endDate && date > p.endDate) return false;
+  const interval = Math.max(1, Number(p.intervalDays) || 1);
+  if (interval === 1) return true;
+  const anchor = p.startDate || date;
+  const a = new Date(anchor + "T12:00:00");
+  const b = new Date(date + "T12:00:00");
+  const days = Math.round((b - a) / 86400000);
+  return days >= 0 && days % interval === 0;
+}
+function medCount(p) { return Math.max(1, Math.min(12, Number(p.timesPerDay) || 1)); }
+function medDoseIndex(log) { return Math.max(1, Number(log.doseIndex) || 1); }
+function TodayMedicationList({date, medPresets, medLogs, role, onToggle}) {
+  const items = medPresets.filter(p => medDue(p, date));
+  const total = items.reduce((sum,p) => sum + medCount(p), 0);
+  const givenFor = p => medLogs.filter(l => l.date === date && l.presetId === p.id && medDoseIndex(l) <= medCount(p));
+  const completed = items.reduce((sum,p) => sum + new Set(givenFor(p).map(medDoseIndex)).size, 0);
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8}}>
+      <span style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>今日用藥</span>
+      <span style={{fontSize:12,color:COLORS.inkSoft}}>已完成 {completed} / {total}</span>
+    </div>
+    {items.length===0 ? <div style={{fontSize:13,color:COLORS.inkSoft,padding:"12px 0"}}>今天沒有排定的藥物</div> : items.map((p,i)=>{
+      const count=medCount(p);
+      const givenIndices=new Set(givenFor(p).map(medDoseIndex));
+      const done=givenIndices.size;
+      return <div key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 3px",borderBottom:i===items.length-1?"none":`1px solid ${COLORS.line}`}}>
+        <span style={{width:43,height:43,borderRadius:13,border:`1px solid ${COLORS.line}`,background:COLORS.accentSoft,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Pill size={22} color={COLORS.accent}/></span>
+        <span style={{flex:1,minWidth:0}}>
+          <span style={{display:"block",fontSize:15,fontWeight:700,color:COLORS.ink}}>{p.name}</span>
+          {p.dose&&<span style={{display:"block",fontSize:12,color:COLORS.inkSoft,marginTop:3}}>{p.dose}</span>}
+          <span style={{display:"block",fontSize:12,color:done===count?COLORS.accent:COLORS.inkSoft,marginTop:3}}>已完成 {done} / {count} 次</span>
+        </span>
+        <span style={{display:"flex",gap:5,flexWrap:"wrap",justifyContent:"flex-end",maxWidth:142}}>
+          {Array.from({length:count},(_,index)=>{
+            const doseIndex=index+1;
+            const given=givenIndices.has(doseIndex);
+            return <button key={doseIndex} type="button" disabled={role!=="owner"} aria-label={`${p.name} 第${doseIndex}次${given?"，已完成":"，未完成"}`} title={`第${doseIndex}次`} onClick={()=>onToggle(p,doseIndex)} style={{width:count===1?32:30,height:count===1?32:30,borderRadius:"50%",border:`2px solid ${given?COLORS.accent:COLORS.line}`,background:given?COLORS.accent:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:role==="owner"?"pointer":"default",color:given?"#fff":COLORS.inkSoft,fontSize:12,fontWeight:700}}>{given?<Check size={16} color="#fff" strokeWidth={3}/>:doseIndex}</button>;
+          })}
+        </span>
+      </div>;
+    })}
+  </div>;
+}
 function MedSection({ date, medPresets, medLogs, role, onTogglePreset, onAddManual, onRemoveLog, onManagePresets, hideHeader = false }) {
   const dayLogs = medLogs.filter((l) => l.date === date);
   // Only ad hoc entries go in the list below — anything tied to a preset is already fully
@@ -665,7 +711,7 @@ function MedSection({ date, medPresets, medLogs, role, onTogglePreset, onAddManu
           able to edit anything. */}
       {medPresets.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {medPresets.map((p) => {
+          {medPresets.filter(p => medDue(p,date)).map((p) => {
             const given = dayLogs.some((l) => l.presetId === p.id);
             const Tag = role === "owner" ? "button" : "div";
             return (
@@ -772,45 +818,46 @@ function MedPresetManager({ medPresets, onAdd, onRemove, onClose }) {
 // Manages the reusable preset list only. A flat log of every dose ever given used to sit
 // below this; it was just the same few names repeated down the page, and looking up one
 // day is faster from that day's diary entry.
-function MedicationsScreen({ medPresets, role, onAddPreset, onRemovePreset }) {
-  const [name, setName] = useState("");
-  const [dose, setDose] = useState("");
-
-  const add = () => {
-    if (!name.trim()) return;
-    onAddPreset({ id: uid(), name: name.trim(), dose: dose.trim(), note: "" });
-    setName(""); setDose("");
+function MedicationsScreen({ medPresets, role, onAddPreset, onRemovePreset, onUpdatePreset }) {
+  const [name,setName]=useState("");
+  const [dose,setDose]=useState("");
+  const [startDate,setStartDate]=useState(todayStr());
+  const [endDate,setEndDate]=useState("");
+  const [intervalDays,setIntervalDays]=useState("1");
+  const [timesPerDay,setTimesPerDay]=useState("1");
+  const [editing,setEditing]=useState(null);
+  const reset=()=>{setName("");setDose("");setStartDate(todayStr());setEndDate("");setIntervalDays("1");setTimesPerDay("1");setEditing(null);};
+  const edit=p=>{setEditing(p.id);setName(p.name);setDose(p.dose||"");setStartDate(p.startDate||"");setEndDate(p.endDate||"");setIntervalDays(String(p.intervalDays||1));setTimesPerDay(String(p.timesPerDay||1));};
+  const save=()=>{
+    if(!name.trim())return;
+    if(startDate&&endDate&&endDate<startDate){alert("結束日期不可早於開始日期");return;}
+    const fields={name:name.trim(),dose:dose.trim(),startDate,endDate,intervalDays:Math.max(1,Number(intervalDays)||1),timesPerDay:Math.max(1,Number(timesPerDay)||1)};
+    if(editing){const original=medPresets.find(p=>p.id===editing);onUpdatePreset({...original,...fields});}
+    else onAddPreset({id:uid(),note:"",...fields});
+    reset();
   };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Card>
-        <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.ink, marginBottom: 10 }}>常用藥</div>
-        {medPresets.length === 0 ? (
-          <div style={{ fontSize: 13, color: COLORS.inkSoft, marginBottom: role === "owner" ? 12 : 0 }}>還沒有常用藥。</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: role === "owner" ? 14 : 0 }}>
-            {medPresets.map((p) => (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: COLORS.bg, borderRadius: 10, padding: "10px 12px" }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.ink }}>{p.name}{p.dose ? ` · ${p.dose}` : ""}</div>
-                {role === "owner" && onRemovePreset && (
-                  <button onClick={() => onRemovePreset(p.id)} aria-label="移除常用藥" style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft }}><X size={15} /></button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {role === "owner" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="藥名（必填）" style={inputStyle} />
-            <input value={dose} onChange={(e) => setDose(e.target.value)} placeholder="常用劑量（選填）" style={inputStyle} />
-            <Btn onClick={add} style={{ alignSelf: "flex-end" }}><Plus size={14} />新增常用藥</Btn>
-          </div>
-        )}
-      </Card>
-
-    </div>
-  );
+  return <div style={{display:"flex",flexDirection:"column",gap:16}}><Card>
+    <div style={{fontSize:15,fontWeight:700,marginBottom:12,color:COLORS.ink}}>用藥清單與排程</div>
+    {medPresets.length===0&&<div style={{fontSize:13,color:COLORS.inkSoft,marginBottom:12}}>還沒有藥物，請在下方新增。</div>}
+    {medPresets.map(p=><div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"11px 0",borderBottom:`1px solid ${COLORS.line}`}}>
+      <div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,color:COLORS.ink}}>{p.name}{p.dose?` · ${p.dose}`:""}</div>
+      <div style={{fontSize:12,color:COLORS.inkSoft,marginTop:4}}>每{p.intervalDays||1}天 · 每次排程{medCount(p)}次{p.startDate?` · ${p.startDate}開始`:""}{p.endDate?` · ${p.endDate}結束`:""}</div></div>
+      {role==="owner"&&<><button onClick={()=>edit(p)} style={{border:"none",background:"transparent",color:COLORS.accent,cursor:"pointer",padding:7}} aria-label="編輯藥物"><Pencil size={17}/></button><button onClick={()=>onRemovePreset(p.id)} style={{border:"none",background:"transparent",color:COLORS.inkSoft,cursor:"pointer",padding:7}} aria-label="刪除藥物"><X size={17}/></button></>}
+    </div>)}
+    {role==="owner"&&<div style={{display:"flex",flexDirection:"column",gap:10,marginTop:16}}>
+      <div style={{fontSize:14,fontWeight:700,color:COLORS.ink}}>{editing?"編輯藥物":"新增藥物"}</div>
+      <input style={inputStyle} value={name} onChange={e=>setName(e.target.value)} placeholder="藥名（自行輸入）"/>
+      <input style={inputStyle} value={dose} onChange={e=>setDose(e.target.value)} placeholder="劑量（選填）"/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <label style={{fontSize:12,color:COLORS.inkSoft}}>開始日期<input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={{...inputStyle,marginTop:5,width:"100%"}}/></label>
+        <label style={{fontSize:12,color:COLORS.inkSoft}}>結束日期（可留空）<input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} style={{...inputStyle,marginTop:5,width:"100%"}}/></label>
+        <label style={{fontSize:12,color:COLORS.inkSoft}}>服藥間隔<select value={intervalDays} onChange={e=>setIntervalDays(e.target.value)} style={{...inputStyle,marginTop:5,width:"100%"}}>{Array.from({length:30},(_,i)=><option key={i} value={i+1}>每{i+1}天</option>)}</select></label>
+        <label style={{fontSize:12,color:COLORS.inkSoft}}>當天服藥次數<select value={timesPerDay} onChange={e=>setTimesPerDay(e.target.value)} style={{...inputStyle,marginTop:5,width:"100%"}}>{Array.from({length:12},(_,i)=><option key={i} value={i+1}>{i+1}次</option>)}</select></label>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>{editing&&<Btn variant="ghost" onClick={reset}>取消編輯</Btn>}<Btn onClick={save}><Check size={14}/>{editing?"儲存修改":"新增藥物"}</Btn></div>
+      <div style={{fontSize:12,color:COLORS.inkSoft}}>結束日期後不再出現在首頁，過去的餵藥紀錄仍保留。未設定結束日期會持續排程。</div>
+    </div>}
+  </Card></div>;
 }
 
 // Picks the sensible default food for a given date: the one actually in use then
@@ -3337,10 +3384,10 @@ function App() {
 
   // Tapping a preset for a given date: if it's already logged that day, un-log it (undo a
   // mis-tap); otherwise add a log entry copying the preset's current name/dose/note.
-  const toggleMedPreset = (date, preset) => {
-    const existing = medLogs.find((l) => l.date === date && l.presetId === preset.id);
+  const toggleMedPreset = (date, preset, doseIndex = 1) => {
+    const existing = medLogs.find((l) => l.date === date && l.presetId === preset.id && medDoseIndex(l) === doseIndex);
     if (existing) { persistMedLogs(medLogs.filter((l) => l.id !== existing.id)); return; }
-    persistMedLogs([...medLogs, { id: uid(), date, presetId: preset.id, name: preset.name, dose: preset.dose || "", note: preset.note || "" }]);
+    persistMedLogs([...medLogs, { id: uid(), date, presetId: preset.id, doseIndex, name: preset.name, dose: preset.dose || "", note: preset.note || "" }]);
   };
   // One-off / ad hoc dose that isn't (or isn't yet) a saved preset. saveAsPreset also adds
   // it to the regular list so it's a tappable checkbox next time.
@@ -3689,19 +3736,8 @@ function App() {
           <HealthSummary records={records} products={products} />
           {role === "owner" && (
             <Card style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink, marginBottom: 8 }}>今日用藥</div>
-              {/* Ticking only. Managing the preset list lives in the 用藥清單 tab, so the
-                  same controls don't appear in two places. */}
-              <MedSection
-                hideHeader
-                date={currentDay}
-                medPresets={medPresets}
-                medLogs={medLogs}
-                role={role}
-                onTogglePreset={(preset) => toggleMedPreset(currentDay, preset)}
-                onAddManual={(entry) => addManualMedLog(currentDay, entry)}
-                onRemoveLog={removeMedLog}
-              />
+              <TodayMedicationList date={currentDay} medPresets={medPresets} medLogs={medLogs} role={role} onToggle={(preset,index)=>toggleMedPreset(currentDay,preset,index)}/>
+
             </Card>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -3764,6 +3800,7 @@ function App() {
                 medPresets={medPresets} role={role}
                 onAddPreset={(preset) => persistMedPresets([...medPresets, preset])}
                 onRemovePreset={removeMedPreset}
+                onUpdatePreset={(updated) => persistMedPresets(medPresets.map(p => p.id === updated.id ? updated : p))}
               />
             )}
           </div>
