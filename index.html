@@ -3020,11 +3020,49 @@ function HealthSummary({ records, products, medLogs = [] }) {
   if (previous.length) patterns.push(`最近 ${last.length} 個同飼料紀錄日，平均每日 ${avg(last).toFixed(1)}g；前 ${previous.length} 個紀錄日 ${avg(previous).toFixed(1)}g（${diff>0?"增加":"變化"} ${Math.abs(diff)}g）。`);
   if (stressed(trial)) patterns.push(`${stressed(trial)} 天記有壓力事件；可對照事件當天及之後的食慾與症狀，但不能據此認定因果。`);
   if (medDays.size) patterns.push(`此飼料期間有 ${medDays.size} 天留下用藥完成紀錄；勾選紀錄不能代表未勾選時一定未服藥。`);
-  const commentExamples = trial.filter(r=>r.other||r.stress).slice(-3).reverse();
   const stressDays = trial.filter(r=>String(r.stress||"").trim());
   const stressIntake = stressDays.length ? avg(stressDays) : null;
   const noStress = trial.filter(r=>!String(r.stress||"").trim());
   const tone = periodLevel(trial,products);
+  // Explainable, evidence-linked assessment. This is local rule-based analysis, not an LLM.
+  const poorIntake = pct !== null && pct < 80;
+  const persistentHard = hard(trial) / n >= 0.3;
+  const frequentVomit = vomit(trial) / n >= 0.1;
+  const improved = previous.length >= 5 && last.length >= 5 && avg(last) >= avg(previous) * 1.15 && avg(last)-avg(previous)>=3;
+  const declined = previous.length >= 5 && last.length >= 5 && avg(last) <= avg(previous) * 0.85 && avg(previous)-avg(last)>=3;
+  const symptoms = [poorIntake, persistentHard, frequentVomit].filter(Boolean).length;
+  const enough = n >= 7 && (target > 0 || trial.some(r=>Number(r.stool)>0 || Number(r.vomit)>0));
+  const assessment = !enough
+    ? {title:"資料不足，尚不能評價", color:COLORS.inkSoft}
+    : symptoms >= 2 || (symptoms >= 1 && declined)
+      ? {title:"整體表現仍有明顯問題",color:COLORS.danger}
+      : symptoms === 1 || declined
+        ? {title:"部分表現尚不理想",color:COLORS.danger}
+        : {title:"紀錄表現相對穩定",color:COLORS.accent};
+  const evidence = [];
+  if (target > 0) evidence.push(`平均進食 ${avg(trial).toFixed(1)}g／天，為設定目標的 ${pct}%。${poorIntake?"長期進食量偏低，是不利訊號。":"未見明顯的長期進食不足訊號。"}`);
+  if (n >= 7) evidence.push(`${n} 個紀錄日中，嘔吐 ${vomit(trial)} 天（${rate(vomit,trial)}%）、偏硬便 ${hard(trial)} 天（${rate(hard,trial)}%）、偏軟便 ${soft(trial)} 天。${persistentHard?"偏硬便頻繁，不能只憑近期食慾改善認定整體適應良好。":""}`);
+  if (previous.length >= 5) evidence.push(`最近 ${last.length} 個紀錄日平均 ${avg(last).toFixed(1)}g，前 ${previous.length} 個為 ${avg(previous).toFixed(1)}g。${improved?"近期進食量有改善。":declined?"近期進食量下降，值得留意。":"尚未呈現明確的進食量大幅變化。"}`);
+  const eventMatchers = [
+    {name:"類固醇調整",re:/類固醇|類固醇減量|停用.*類固醇/},
+    {name:"軟便劑調整",re:/軟便[藥劑]|瀉藥|乳果糖/},
+    {name:"眼部症狀或治療",re:/眼藥|眼淚|流淚|淚痕|眼睛/},
+    {name:"食慾變化",re:/食慾|不吃|吃得少|食量/},
+    {name:"精神變化",re:/精神不好|精神變好|有精神|沒精神/}
+  ];
+  const events = [];
+  trial.forEach((r,i)=>{
+    const txt=String(r.other||"")+" "+String(r.stress||"");
+    eventMatchers.forEach(m=>{
+      if (!m.re.test(txt)) return;
+      if (events.some(e=>e.name===m.name && e.date===r.date)) return;
+      const before=trial.slice(Math.max(0,i-3),i);
+      const after=trial.slice(i+1,i+4);
+      events.push({date:r.date,name:m.name,before:before.length>=2?avg(before):null,after:after.length>=2?avg(after):null});
+    });
+  });
+  const recentEvents=events.slice(-5).reverse();
+  const assessmentCaveat = `這是 ${productName} 使用期間的「症狀與進食表現」評價，不等於已證明飼料本身適合或不適合。${medDays.size||events.some(e=>/類固醇|軟便劑/.test(e.name))?"期間存在用藥或劑量相關紀錄，可能影響食慾及排便。":"仍須考慮未完整記錄的用藥、混餵及其他因素。"}`;
   return (
     <Card style={{ marginBottom:12 }}>
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
@@ -3039,17 +3077,25 @@ function HealthSummary({ records, products, medLogs = [] }) {
         <div style={{background:COLORS.accentSoft,borderRadius:12,padding:12}}><div style={{fontSize:11,color:COLORS.inkSoft}}>近期紀錄指標</div><div style={{fontSize:23,fontWeight:800,color:COLORS.accent}}>{latestScore}<span style={{fontSize:12,fontWeight:400}}> / 100</span></div><div style={{fontSize:11,color:COLORS.inkSoft}}>{priorScore!==null?`較前期 ${latestScore-priorScore>=0?"+":""}${latestScore-priorScore} 分`:"前期資料不足"}</div></div>
         <div style={{background:COLORS.accentSoft,borderRadius:12,padding:12}}><div style={{fontSize:11,color:COLORS.inkSoft}}>同飼料觀察</div><div style={{fontSize:23,fontWeight:800,color:COLORS.accent}}>{n}<span style={{fontSize:12,fontWeight:400}}> 天</span></div><div style={{fontSize:11,color:COLORS.inkSoft}}>嘔吐 {vomit(trial)} 天 · 壓力 {stressed(trial)} 天</div></div>
       </div>
-      <div style={{fontSize:13,lineHeight:1.8,color:COLORS.ink}}>{patterns.slice(0,2).join(" ") || `目前 ${productName} 共 ${n} 個紀錄日，尚無足夠的異常訊號可作進一步推論。`}</div>
+      <div style={{background:COLORS.accentSoft,borderRadius:12,padding:12,marginBottom:10}}>
+        <div style={{fontSize:11,fontWeight:700,color:COLORS.inkSoft,marginBottom:5}}>這款飼料的整體評價</div>
+        <div style={{fontSize:17,fontWeight:800,color:assessment.color,marginBottom:7}}>{assessment.title}</div>
+        <div style={{fontSize:13,lineHeight:1.75,color:COLORS.ink}}>{evidence.slice(0,3).join(" ") || "尚無足夠的完整紀錄可作判斷。"}</div>
+        <div style={{fontSize:12,lineHeight:1.7,color:COLORS.inkSoft,marginTop:8}}>{assessmentCaveat}</div>
+      </div>
       <button type="button" onClick={()=>setOpen(!open)} style={{width:"100%",marginTop:12,border:`1px solid ${COLORS.line}`,borderRadius:10,padding:10,background:"#fff",color:COLORS.accent,fontWeight:700,cursor:"pointer"}}>{open?"收起完整分析":"查看完整分析與比較"} {open?"⌃":"⌄"}</button>
       {open && <div style={{marginTop:14,fontSize:13,color:COLORS.ink,lineHeight:1.8}}>
         <div style={{display:"flex",gap:8,marginBottom:12}}>{[7,14,30].map(x=><button key={x} type="button" onClick={()=>setWindowDays(x)} style={{flex:1,border:`1px solid ${COLORS.line}`,borderRadius:8,padding:7,background:windowDays===x?COLORS.accentSoft:"#fff",color:COLORS.ink}}>{x} 個紀錄日</button>)}</div>
         <div style={{fontWeight:700,marginBottom:6}}>近期與前期</div>
         <div>近期平均 {avg(last).toFixed(1)}g／天；前期 {previous.length?`${avg(previous).toFixed(1)}g／天`:"資料不足"}。近期嘔吐 {vomit(last)} 天，前期 {previous.length?`${vomit(previous)} 天`:"資料不足"}。</div>
-        <div style={{fontWeight:700,marginTop:12,marginBottom:6}}>綜合觀察</div>
-        {patterns.map((x,i)=><div key={i} style={{marginBottom:5}}>• {x}</div>)}
-        <div style={{marginTop:10}}>備註紀錄 {notes(trial)} 天；壓力事件 {stressed(trial)} 天。{stressIntake!==null&&noStress.length?`有記壓力的日子平均 ${stressIntake.toFixed(1)}g，未記壓力的日子平均 ${avg(noStress).toFixed(1)}g；未記錄不代表沒有壓力。`:"壓力資料尚不足以比較。"}</div>
-        {commentExamples.length>0&&<><div style={{fontWeight:700,marginTop:12}}>最近相關備註</div>{commentExamples.map((r,i)=><div key={i} style={{padding:"7px 0",borderBottom:`1px solid ${COLORS.line}`,overflowWrap:"anywhere"}}><span style={{color:COLORS.inkSoft}}>{r.date}　</span>{r.stress?`壓力：${r.stress}　`:""}{r.other?`備註：${r.other}`:""}</div>)}</>}
-        <div style={{marginTop:12,padding:10,background:COLORS.accentSoft,borderRadius:10,fontSize:12}}>指標為自動統計，不是經驗證的醫療評分；備註目前展示原文，尚未接入大型語言模型做語意推理。不同飼料、混餵、用藥與紀錄缺漏可能干擾比較，不能據此確診過敏或疾病。</div>
+        <div style={{fontWeight:700,marginTop:12,marginBottom:6}}>關鍵變化與可能干擾</div>
+        {recentEvents.length ? recentEvents.map((e,i)=><div key={i} style={{marginBottom:8,padding:"8px 10px",background:COLORS.accentSoft,borderRadius:8}}>
+          <strong>{e.date} · {e.name}</strong>
+          <div style={{fontSize:12}}>{e.before!==null&&e.after!==null?`事件前 3 個同飼料紀錄日平均 ${e.before.toFixed(1)}g，事件後 3 個平均 ${e.after.toFixed(1)}g；僅為時間關聯，不能證明因果。`:"事件前後可比較的同飼料紀錄不足，暫不能判定變化。"}</div>
+        </div>) : <div>目前備註中未辨識到可比較的特定事件；未記錄不代表事件未發生。</div>}
+        {stressed(trial)>0&&<div style={{marginTop:8}}>壓力事件共記錄 {stressed(trial)} 天。不同時期的食慾本來就可能不同，不能直接以有無壓力日的平均食量判斷壓力效果。</div>}
+        <div style={{marginTop:10,fontSize:12,color:COLORS.inkSoft}}>以上依現有結構化紀錄及備註關鍵詞建立時間線；不會自動理解所有自由文字，也不會把相關性視為因果。</div>
+        <div style={{marginTop:12,padding:10,background:COLORS.accentSoft,borderRadius:10,fontSize:12}}>指標為自動統計，不是經驗證的醫療評分；備註原文不在此重複展示；目前為可追溯的規則式判讀，尚未接入大型語言模型。不同飼料、混餵、用藥與紀錄缺漏可能干擾比較，不能據此確診過敏或疾病。</div>
       </div>}
     </Card>
   );
