@@ -3043,26 +3043,45 @@ function HealthSummary({ records, products, medLogs = [] }) {
   if (target > 0) evidence.push(`平均進食 ${avg(trial).toFixed(1)}g／天，為設定目標的 ${pct}%。${poorIntake?"長期進食量偏低，是不利訊號。":"未見明顯的長期進食不足訊號。"}`);
   if (n >= 7) evidence.push(`${n} 個紀錄日中，嘔吐 ${vomit(trial)} 天（${rate(vomit,trial)}%）、偏硬便 ${hard(trial)} 天（${rate(hard,trial)}%）、偏軟便 ${soft(trial)} 天。${persistentHard?"偏硬便頻繁，不能只憑近期食慾改善認定整體適應良好。":""}`);
   if (previous.length >= 5) evidence.push(`最近 ${last.length} 個紀錄日平均 ${avg(last).toFixed(1)}g，前 ${previous.length} 個為 ${avg(previous).toFixed(1)}g。${improved?"近期進食量有改善。":declined?"近期進食量下降，值得留意。":"尚未呈現明確的進食量大幅變化。"}`);
-  const eventMatchers = [
-    {name:"類固醇調整",re:/類固醇|類固醇減量|停用.*類固醇/},
-    {name:"軟便劑調整",re:/軟便[藥劑]|瀉藥|乳果糖/},
-    {name:"眼部症狀或治療",re:/眼藥|眼淚|流淚|淚痕|眼睛/},
-    {name:"食慾變化",re:/食慾|不吃|吃得少|食量/},
-    {name:"精神變化",re:/精神不好|精神變好|有精神|沒精神/}
-  ];
+  // Interpret free-text notes as supporting context, not as medication change events.
+  // Historical medication names may omit morning/evening doses; a repeated name or
+  // repeated dose (e.g. 軟便劑2cc/早晚) is never evidence of an adjustment.
+  const noteText = r => [r.other, r.stress].filter(Boolean).join(" ").replace(/\s+/g," ");
+  const explicitChange = /(?:開始|新增|停用|停止|停吃|不吃|減量|減少|增加|加量|改成|改為|調整|由.{1,24}(?:改|變|增|減)|從.{1,24}(?:改|變|增|減))/;
+  const steroidName = /類固醇/;
+  const softenerName = /軟便[藥劑]|瀉藥|乳果糖/;
+  const doseDetails = txt => {
+    const m=txt.match(/(\d+(?:\.\d+)?)\s*(?:cc|ml|毫升)/i);
+    const freq=/早晚|早.{0,4}晚|一天兩次|每日兩次|一日兩次|bid/i.test(txt)?2:/只有早|只吃早|僅早|每天一次|每日一次|一天一次|qd/i.test(txt)?1:null;
+    return {dose:m?Number(m[1]):null,freq};
+  };
   const events = [];
   trial.forEach((r,i)=>{
-    const txt=String(r.other||"")+" "+String(r.stress||"");
-    eventMatchers.forEach(m=>{
-      if (!m.re.test(txt)) return;
-      if (events.some(e=>e.name===m.name && e.date===r.date)) return;
-      const before=trial.slice(Math.max(0,i-3),i);
-      const after=trial.slice(i+1,i+4);
-      events.push({date:r.date,name:m.name,before:before.length>=2?avg(before):null,after:after.length>=2?avg(after):null});
-    });
+    const txt=noteText(r);
+    if (!txt) return;
+    const before=trial.slice(Math.max(0,i-3),i);
+    const after=trial.slice(i+1,i+4);
+    // Steroid changes require explicit change language, not a mere mention.
+    if (steroidName.test(txt) && explicitChange.test(txt)) {
+      events.push({date:r.date,name:"類固醇用法變更（備註記載）",before:before.length>=2?avg(before):null,after:after.length>=2?avg(after):null});
+    }
+    // Softener changes require an explicit change and evidence of what changed.
+    // An unchanged repeated regimen is a continuation, not an event.
+    if (softenerName.test(txt) && explicitChange.test(txt)) {
+      const now=doseDetails(txt);
+      const prior=trial.slice(0,i).reverse().find(x=>softenerName.test(noteText(x)));
+      const old=prior?doseDetails(noteText(prior)):null;
+      const changed=old && ((now.dose!==null && old.dose!==null && now.dose!==old.dose) ||
+        (now.freq!==null && old.freq!==null && now.freq!==old.freq));
+      const explicitFromTo=/(?:從|由).{1,28}(?:改成|改為|增加到|減少到|調整為)/.test(txt);
+      if (changed || explicitFromTo) {
+        events.push({date:r.date,name:"軟便劑用法變更（有前後依據）",before:before.length>=2?avg(before):null,after:after.length>=2?avg(after):null});
+      }
+    }
   });
-  const recentEvents=events.slice(-5).reverse();
-  const assessmentCaveat = `這是 ${productName} 使用期間的「症狀與進食表現」評價，不等於已證明飼料本身適合或不適合。${medDays.size||events.some(e=>/類固醇|軟便劑/.test(e.name))?"期間存在用藥或劑量相關紀錄，可能影響食慾及排便。":"仍須考慮未完整記錄的用藥、混餵及其他因素。"}`;
+  // Avoid repeating ambiguous, low-information events in the report.
+  const recentEvents=events.filter(e=>e.before!==null&&e.after!==null).slice(-3).reverse();
+  const assessmentCaveat = `這是 ${productName} 使用期間的「症狀與進食表現」評價，不等於已證明飼料本身適合或不適合。${medDays.size||events.some(e=>/類固醇|軟便劑/.test(e.name))?"期間有用藥相關紀錄，可能影響食慾及排便；提到藥名不代表調整劑量。":"仍須考慮未完整記錄的用藥、混餵及其他因素。"}`;
   return (
     <Card style={{ marginBottom:12 }}>
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
@@ -3092,9 +3111,9 @@ function HealthSummary({ records, products, medLogs = [] }) {
         {recentEvents.length ? recentEvents.map((e,i)=><div key={i} style={{marginBottom:8,padding:"8px 10px",background:COLORS.accentSoft,borderRadius:8}}>
           <strong>{e.date} · {e.name}</strong>
           <div style={{fontSize:12}}>{e.before!==null&&e.after!==null?`事件前 3 個同飼料紀錄日平均 ${e.before.toFixed(1)}g，事件後 3 個平均 ${e.after.toFixed(1)}g；僅為時間關聯，不能證明因果。`:"事件前後可比較的同飼料紀錄不足，暫不能判定變化。"}</div>
-        </div>) : <div>目前備註中未辨識到可比較的特定事件；未記錄不代表事件未發生。</div>}
+        </div>) : <div>目前沒有足夠證據支持可比較的用藥變更事件。</div>}
         {stressed(trial)>0&&<div style={{marginTop:8}}>壓力事件共記錄 {stressed(trial)} 天。不同時期的食慾本來就可能不同，不能直接以有無壓力日的平均食量判斷壓力效果。</div>}
-        <div style={{marginTop:10,fontSize:12,color:COLORS.inkSoft}}>以上依現有結構化紀錄及備註關鍵詞建立時間線；不會自動理解所有自由文字，也不會把相關性視為因果。</div>
+        <div style={{marginTop:10,fontSize:12,color:COLORS.inkSoft}}>只呈現有明確變更描述且有前後紀錄的事件；同一藥物的名稱差異或重複記載不視為調整，也不將時間關聯視為因果。</div>
         <div style={{marginTop:12,padding:10,background:COLORS.accentSoft,borderRadius:10,fontSize:12}}>指標為自動統計，不是經驗證的醫療評分；備註原文不在此重複展示；目前為可追溯的規則式判讀，尚未接入大型語言模型。不同飼料、混餵、用藥與紀錄缺漏可能干擾比較，不能據此確診過敏或疾病。</div>
       </div>}
     </Card>
