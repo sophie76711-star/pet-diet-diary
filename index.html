@@ -2975,9 +2975,7 @@ function ExportPanel({ records, products, petName }) {
 
 // ---------- Evidence-based food trial analysis (computed locally, no extra cloud writes) ----------
 function HealthSummary({ records, products, medLogs = [] }) {
-  const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState("");
-  const [windowDays, setWindowDays] = useState(14);
   if (!records.length) return null;
   const ordered = records.slice().filter(r => r.date).sort((a,b)=>a.date.localeCompare(b.date));
   const ids = [...new Set(ordered.map(r=>r.productId).filter(Boolean))];
@@ -2995,7 +2993,7 @@ function HealthSummary({ records, products, medLogs = [] }) {
   const soft = arr => arr.filter(r=>Number(r.stool)>=6).length;
   const stressed = arr => arr.filter(r=>String(r.stress||"").trim()).length;
   const pct = target ? Math.round(avg(trial)/target*100) : null;
-  const last = trial.slice(-windowDays), previous = trial.slice(-windowDays*2,-windowDays);
+  const last = trial.slice(-14), previous = trial.slice(-28,-14);
   const rate = (x,y) => y.length ? Math.round(x(y)/y.length*100) : 0;
   // Descriptive index only. Missing mental/stool values are excluded, not treated as healthy.
   const score = arr => {
@@ -3056,13 +3054,6 @@ function HealthSummary({ records, products, medLogs = [] }) {
         <div style={{fontSize:13,lineHeight:1.75,color:COLORS.ink}}>{evidence.slice(0,3).join(" ") || "尚無足夠的完整紀錄可作判斷。"}</div>
         <div style={{fontSize:12,lineHeight:1.7,color:COLORS.inkSoft,marginTop:8}}>{assessmentCaveat}</div>
       </div>
-      <button type="button" onClick={()=>setOpen(!open)} style={{width:"100%",marginTop:12,border:`1px solid ${COLORS.line}`,borderRadius:10,padding:10,background:"#fff",color:COLORS.accent,fontWeight:700,cursor:"pointer"}}>{open?"收起完整分析":"查看完整分析與比較"} {open?"⌃":"⌄"}</button>
-      {open && <div style={{marginTop:14,fontSize:13,color:COLORS.ink,lineHeight:1.8}}>
-        <div style={{display:"flex",gap:8,marginBottom:12}}>{[7,14,30].map(x=><button key={x} type="button" onClick={()=>setWindowDays(x)} style={{flex:1,border:`1px solid ${COLORS.line}`,borderRadius:8,padding:7,background:windowDays===x?COLORS.accentSoft:"#fff",color:COLORS.ink}}>{x} 個紀錄日</button>)}</div>
-        <div style={{fontWeight:700,marginBottom:6}}>近期與前期</div>
-        <div>近期平均 {avg(last).toFixed(1)}g／天；前期 {previous.length?`${avg(previous).toFixed(1)}g／天`:"資料不足"}。近期嘔吐 {vomit(last)} 天，前期 {previous.length?`${vomit(previous)} 天`:"資料不足"}。</div>
-        <div style={{marginTop:12,padding:10,background:COLORS.accentSoft,borderRadius:10,fontSize:12}}>此為紀錄統計與規則式評價，並非臨床評分或真正的 AI 語意分析。備註與壓力紀錄仍保留在原始資料中，但目前不會自動解讀文字中的用藥變更；不同飼料、混餵及用藥情況可能影響比較結果。</div>
-      </div>}
     </Card>
   );
 }
