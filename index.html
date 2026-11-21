@@ -1570,20 +1570,33 @@ function DayDetail({ record, product, products = [], medLogs = [] }) {
       {(() => {
         const dayMeds = medLogs.filter((l) => l.date === record.date);
         if (dayMeds.length === 0) return null;
+        // Group display only. Preserve every individual dose log in Firestore and in editing.
+        // Prefer preset identity; legacy/manual logs without a preset use their normalized name.
+        const grouped = new Map();
+        dayMeds.forEach((l) => {
+          const name = String(l.name || "未命名藥物").trim();
+          const key = l.presetId != null ? `preset:${l.presetId}` : `manual:${name.toLocaleLowerCase()}`;
+          if (!grouped.has(key)) grouped.set(key, { name, logs: [] });
+          grouped.get(key).logs.push(l);
+        });
         return (
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.inkSoft, marginBottom: 6 }}>用藥</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {dayMeds.map((l) => (
-                <div key={l.id} style={{
-                  display: "flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 999,
-                  border: `1px solid ${COLORS.accent}`, background: COLORS.accentSoft,
-                  color: COLORS.accent, fontSize: 12, fontWeight: 600,
-                }}>
-                  <Check size={12} strokeWidth={3} />
-                  {l.name}{l.dose ? ` · ${l.dose}` : ""}
-                </div>
-              ))}
+              {Array.from(grouped.entries()).map(([key, group]) => {
+                const doses = [...new Set(group.logs.map(l => String(l.dose || "").trim()).filter(Boolean))];
+                const doseText = doses.length === 1 ? ` · ${doses[0]}` : "";
+                return (
+                  <div key={key} style={{
+                    display: "flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 999,
+                    border: `1px solid ${COLORS.accent}`, background: COLORS.accentSoft,
+                    color: COLORS.accent, fontSize: 12, fontWeight: 600,
+                  }}>
+                    <Check size={12} strokeWidth={3} />
+                    {group.name}{doseText}{group.logs.length > 1 ? ` · ${group.logs.length} 次` : ""}
+                  </div>
+                );
+              })}
             </div>
           </div>
         );
