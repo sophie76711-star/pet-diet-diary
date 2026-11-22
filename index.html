@@ -830,7 +830,32 @@ function treatmentAnalysis(event, records) {
     overall=`變更後平均進食 ${fmt(post)}，變更前 ${fmt(pre)}；${Math.abs(diff)<2?"進食量大致持平":diff>0?`增加約 ${Math.round(diff*10)/10}g`:`減少約 ${Math.round(-diff*10)/10}g`}。`;
   }
   const recentText=recent==null ? (earlier.length ? `變更前最近 ${Math.min(earlier.length,3)} 筆平均 ${fmt(average(earlier.slice(-3)))}；變更後尚待新增日記。` : "尚無近期飲食紀錄。") : `最近 ${Math.min(later.length,Math.max(1,Math.ceil(later.length/3)))} 筆平均 ${fmt(recent)}${post!=null&&Math.abs(recent-post)>=2?(recent>post?"，高於變更後整體平均。":"，低於變更後整體平均。"):"，與變更後整體平均接近。"}`;
-  return {overall,recentText,beforeCount:earlier.length,afterCount:later.length};
+  // Stool scores use the existing diary's 1–7 scale; 3–4 is the normal range.
+  // Missing/invalid values are excluded rather than treated as normal stools.
+  const validStools = arr => arr.map(r=>Number(r.stool)).filter(n=>Number.isInteger(n)&&n>=1&&n<=7);
+  const stoolSummary = arr => {
+    const values=validStools(arr);
+    if(!values.length)return null;
+    const hard=values.filter(n=>n<=2).length;
+    const normal=values.filter(n=>n>=3&&n<=4).length;
+    const soft=values.filter(n=>n>=6).length;
+    const borderline=values.filter(n=>n===5).length;
+    return {n:values.length,hard,normal,soft,borderline,rate:normal/values.length};
+  };
+  const beforeStool=stoolSummary(earlier.slice(-Math.max(3,later.length)));
+  const afterStool=stoolSummary(later);
+  const recentStool=stoolSummary(later.slice(-Math.max(1,Math.ceil(later.length/3))));
+  const stoolLabel=s=>s?`正常（3～4分）${s.normal}/${s.n}筆、偏硬（1～2分）${s.hard}筆、偏軟（6～7分）${s.soft}筆${s.borderline?`、5分 ${s.borderline}筆`:""}`:"沒有有效便便分數";
+  let stoolOverall;
+  if(!afterStool)stoolOverall=`變更後尚無有效便便分數；變更前${stoolLabel(beforeStool)}。`;
+  else if(!beforeStool)stoolOverall=`變更後${stoolLabel(afterStool)}；變更前沒有可比較的便便分數。`;
+  else {
+    const diff=afterStool.rate-beforeStool.rate;
+    const direction=Math.abs(diff)<0.1?"正常比例接近":diff>0?"正常比例提高":"正常比例下降";
+    stoolOverall=`變更前${stoolLabel(beforeStool)}；變更後${stoolLabel(afterStool)}；${direction}。`;
+  }
+  const stoolRecent=recentStool?`最近 ${recentStool.n} 筆：${stoolLabel(recentStool)}。`:(beforeStool?`變更後尚無有效便便分數；變更前最近的紀錄：${stoolLabel(stoolSummary(earlier.slice(-3)))}。`:"目前尚無有效便便分數。");
+  return {overall,recentText,stoolOverall,stoolRecent,beforeCount:earlier.length,afterCount:later.length};
 }
 function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false}) {
   const [open,setOpen]=useState(false);
@@ -855,7 +880,9 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
       <div style={{fontSize:12,color:COLORS.inkSoft,marginTop:6}}>{e.before||"未記錄原方案"} → {e.after}</div>
       <div style={{fontSize:12,color:COLORS.ink,marginTop:10,lineHeight:1.7}}><strong>整體表現：</strong>{a.overall}</div>
       <div style={{fontSize:12,color:COLORS.ink,marginTop:4,lineHeight:1.7}}><strong>近期變化：</strong>{a.recentText}</div>
-      <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:6}}>變更前 {a.beforeCount} 筆、變更後 {a.afterCount} 筆飲食紀錄。進食量變化不能直接歸因於藥物；排便、嘔吐等仍請參考原始日記。</div>
+      <div style={{fontSize:12,color:COLORS.ink,marginTop:8,lineHeight:1.7}}><strong>排便整體：</strong>{a.stoolOverall}</div>
+      <div style={{fontSize:12,color:COLORS.ink,marginTop:4,lineHeight:1.7}}><strong>排便近期：</strong>{a.stoolRecent}</div>
+      <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:6}}>變更前 {a.beforeCount} 筆、變更後 {a.afterCount} 筆飲食紀錄。進食量及排便變化不能直接歸因於藥物；嘔吐等仍請參考原始日記。</div>
       {!compact&&e.note&&<div style={{fontSize:12,color:COLORS.inkSoft,marginTop:5}}>補充：{e.note}</div>}
       {!compact&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}><span style={{fontSize:11,color:COLORS.inkSoft}}>{e.active===false?"已結束追蹤":"追蹤中"}</span>{role==="owner"&&<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>edit(e)}>編輯／結束</Btn><Btn variant="ghost" onClick={()=>onDelete(e.id)}>刪除</Btn></div>}</div>}
     </div>})}
