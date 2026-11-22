@@ -191,7 +191,6 @@ const vetViewedKey = (petId) => `cat-diet-vet-viewed:${petId}`;
 // a vet.
 const medPresetsKey = (petId) => `cat-diet-med-presets:${petId}`;
 const medLogsKey = (petId) => `cat-diet-med-logs:${petId}`;
-const treatmentEventsKey = (petId) => `cat-diet-treatment-events:${petId}`;
 
 // Reads a key. Returns [] when the key genuinely doesn't exist yet, but THROWS when the
 // read itself fails (offline, quota, permissions). Callers must not treat a thrown error
@@ -811,94 +810,6 @@ function MedPresetManager({ medPresets, onAdd, onRemove, onClose }) {
       </div>
     </Modal>
   );
-}
-
-// Treatment changes are separate from actual dose logs. Historical records remain untouched.
-function treatmentAnalysis(event, records) {
-  const ordered = [...records].filter(r=>r.date && r.date <= todayStr()).sort((a,b)=>a.date.localeCompare(b.date));
-  const earlier = ordered.filter(r=>r.date < event.date);
-  const later = ordered.filter(r=>r.date >= event.date);
-  const average = arr => arr.length ? arr.reduce((s,r)=>s+(Number(r.breakfast)||0)+(Number(r.dinner)||0)+(Number(r.bedtime)||0),0)/arr.length : null;
-  const pre = average(earlier.slice(-Math.max(3,later.length)));
-  const post = average(later);
-  const recent = average(later.slice(-Math.max(1,Math.ceil(later.length/3))));
-  const fmt = n => n==null ? "尚無紀錄" : `${Math.round(n*10)/10}g`;
-  let overall = pre==null ? "尚無可用的變更前飲食紀錄，已建立治療追蹤。" : `變更前最近 ${Math.min(earlier.length,Math.max(3,later.length))} 筆平均進食 ${fmt(pre)}；變更後尚無飲食紀錄，目前無法判斷調整後是否有變化。`;
-  if(post!=null && pre==null) overall=`變更後平均進食 ${fmt(post)}；變更前沒有可比較的飲食紀錄。`;
-  if(post!=null && pre!=null) {
-    const diff=post-pre;
-    overall=`變更後平均進食 ${fmt(post)}，變更前 ${fmt(pre)}；${Math.abs(diff)<2?"進食量大致持平":diff>0?`增加約 ${Math.round(diff*10)/10}g`:`減少約 ${Math.round(-diff*10)/10}g`}。`;
-  }
-  const recentText=recent==null ? (earlier.length ? `變更前最近 ${Math.min(earlier.length,3)} 筆平均 ${fmt(average(earlier.slice(-3)))}；變更後尚待新增日記。` : "尚無近期飲食紀錄。") : `最近 ${Math.min(later.length,Math.max(1,Math.ceil(later.length/3)))} 筆平均 ${fmt(recent)}${post!=null&&Math.abs(recent-post)>=2?(recent>post?"，高於變更後整體平均。":"，低於變更後整體平均。"):"，與變更後整體平均接近。"}`;
-  // Stool scores use the existing diary's 1–7 scale; 3–4 is the normal range.
-  // Missing/invalid values are excluded rather than treated as normal stools.
-  const validStools = arr => arr.map(r=>Number(r.stool)).filter(n=>Number.isInteger(n)&&n>=1&&n<=7);
-  const stoolSummary = arr => {
-    const values=validStools(arr);
-    if(!values.length)return null;
-    const hard=values.filter(n=>n<=2).length;
-    const normal=values.filter(n=>n>=3&&n<=4).length;
-    const soft=values.filter(n=>n>=6).length;
-    const borderline=values.filter(n=>n===5).length;
-    return {n:values.length,hard,normal,soft,borderline,rate:normal/values.length};
-  };
-  const beforeStool=stoolSummary(earlier.slice(-Math.max(3,later.length)));
-  const afterStool=stoolSummary(later);
-  const recentStool=stoolSummary(later.slice(-Math.max(1,Math.ceil(later.length/3))));
-  const stoolLabel=s=>s?`正常（3～4分）${s.normal}/${s.n}筆、偏硬（1～2分）${s.hard}筆、偏軟（6～7分）${s.soft}筆${s.borderline?`、5分 ${s.borderline}筆`:""}`:"沒有有效便便分數";
-  let stoolOverall;
-  if(!afterStool)stoolOverall=`變更後尚無有效便便分數；變更前${stoolLabel(beforeStool)}。`;
-  else if(!beforeStool)stoolOverall=`變更後${stoolLabel(afterStool)}；變更前沒有可比較的便便分數。`;
-  else {
-    const diff=afterStool.rate-beforeStool.rate;
-    const direction=Math.abs(diff)<0.1?"正常比例接近":diff>0?"正常比例提高":"正常比例下降";
-    stoolOverall=`變更前${stoolLabel(beforeStool)}；變更後${stoolLabel(afterStool)}；${direction}。`;
-  }
-  const stoolRecent=recentStool?`最近 ${recentStool.n} 筆：${stoolLabel(recentStool)}。`:(beforeStool?`變更後尚無有效便便分數；變更前最近的紀錄：${stoolLabel(stoolSummary(earlier.slice(-3)))}。`:"目前尚無有效便便分數。");
-  return {overall,recentText,stoolOverall,stoolRecent,beforeCount:earlier.length,afterCount:later.length};
-}
-function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false}) {
-  const [open,setOpen]=useState(false);
-  const [editing,setEditing]=useState(null);
-  const [name,setName]=useState("");
-  const [kind,setKind]=useState("調整劑量／頻率");
-  const [date,setDate]=useState(todayStr());
-  const [before,setBefore]=useState("");
-  const [after,setAfter]=useState("");
-  const [note,setNote]=useState("");
-  const [active,setActive]=useState(true);
-  const reset=()=>{setEditing(null);setName("");setKind("調整劑量／頻率");setDate(todayStr());setBefore("");setAfter("");setNote("");setActive(true);setOpen(false);};
-  const edit=e=>{setEditing(e.id);setName(e.name);setKind(e.kind);setDate(e.date);setBefore(e.before||"");setAfter(e.after||"");setNote(e.note||"");setActive(e.active!==false);setOpen(true);};
-  const save=()=>{if(!name.trim()||!date||!after.trim())return;const data={id:editing||uid(),name:name.trim(),kind,date,before:before.trim(),after:after.trim(),note:note.trim(),active};if(editing)onUpdate(data);else onAdd(data);reset();};
-  const sorted=[...events].sort((a,b)=>b.date.localeCompare(a.date));
-  const shown=compact?sorted.filter(e=>e.active!==false).slice(0,1):sorted;
-  if(compact && !shown.length) return null;
-  return <div style={{display:"flex",flexDirection:"column",gap:12}}>
-    {!compact&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{fontWeight:700,color:COLORS.ink}}>治療變更歷史</div>{role==="owner"&&<Btn onClick={()=>setOpen(v=>!v)}><Plus size={14}/>記錄變更</Btn>}</div>}
-    {shown.map(e=>{const a=treatmentAnalysis(e,records);return <div key={e.id} style={{background:compact?COLORS.accentSoft:COLORS.card,border:`1px solid ${COLORS.line}`,borderRadius:12,padding:13,marginBottom:compact?0:3}}>
-      <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"center"}}><div style={{fontSize:14,fontWeight:700,color:COLORS.ink,display:"flex",gap:7,alignItems:"center"}}><Pill size={16} color={COLORS.accent}/>{e.name} · {e.kind}</div><span style={{fontSize:11,color:COLORS.inkSoft,whiteSpace:"nowrap"}}>{e.date}</span></div>
-      <div style={{fontSize:12,color:COLORS.inkSoft,marginTop:6}}>{e.before||"未記錄原方案"} → {e.after}</div>
-      <div style={{fontSize:12,color:COLORS.ink,marginTop:10,lineHeight:1.7}}><strong>整體表現：</strong>{a.overall}</div>
-      <div style={{fontSize:12,color:COLORS.ink,marginTop:4,lineHeight:1.7}}><strong>近期變化：</strong>{a.recentText}</div>
-      <div style={{fontSize:12,color:COLORS.ink,marginTop:8,lineHeight:1.7}}><strong>排便整體：</strong>{a.stoolOverall}</div>
-      <div style={{fontSize:12,color:COLORS.ink,marginTop:4,lineHeight:1.7}}><strong>排便近期：</strong>{a.stoolRecent}</div>
-      <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:6}}>變更前 {a.beforeCount} 筆、變更後 {a.afterCount} 筆飲食紀錄。進食量及排便變化不能直接歸因於藥物；嘔吐等仍請參考原始日記。</div>
-      {!compact&&e.note&&<div style={{fontSize:12,color:COLORS.inkSoft,marginTop:5}}>補充：{e.note}</div>}
-      {!compact&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}><span style={{fontSize:11,color:COLORS.inkSoft}}>{e.active===false?"已結束追蹤":"追蹤中"}</span>{role==="owner"&&<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>edit(e)}>編輯／結束</Btn><Btn variant="ghost" onClick={()=>onDelete(e.id)}>刪除</Btn></div>}</div>}
-    </div>})}
-    {!compact&&shown.length===0&&<div style={{fontSize:13,color:COLORS.inkSoft}}>尚無治療變更紀錄。可以慢慢補登過去的換藥日期。</div>}
-    {!compact&&open&&role==="owner"&&<Card><div style={{fontWeight:700,marginBottom:10}}>記錄治療變更</div><div style={{display:"flex",flexDirection:"column",gap:9}}>
-      <select value={kind} onChange={e=>setKind(e.target.value)} style={inputStyle}>{["調整劑量／頻率","更換藥物／成分","開始保健食品","停藥","其他治療變更"].map(k=><option key={k}>{k}</option>)}</select>
-      <input style={inputStyle} type="date" value={date} onChange={e=>setDate(e.target.value)}/>
-      <input style={inputStyle} placeholder="藥物或保健食品名稱" value={name} onChange={e=>setName(e.target.value)}/>
-      <input style={inputStyle} placeholder="變更前（可留空）" value={before} onChange={e=>setBefore(e.target.value)}/>
-      <input style={inputStyle} placeholder="變更後（必填）" value={after} onChange={e=>setAfter(e.target.value)}/>
-      <textarea style={inputStyle} rows={2} placeholder="原因或成分補充（選填）" value={note} onChange={e=>setNote(e.target.value)}/>
-      <label style={{fontSize:12,color:COLORS.inkSoft}}><input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)}/> 持續在首頁追蹤</label>
-      <div style={{fontSize:11,color:COLORS.inkSoft}}>試用版僅記錄治療變更，不會自動修改每日用藥排程。若劑次改變，請另在「用藥清單」調整。</div>
-      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn variant="ghost" onClick={reset}>取消</Btn><Btn onClick={save} disabled={!name.trim()||!after.trim()||!date}>儲存變更</Btn></div>
-    </div></Card>}
-  </div>;
 }
 
 // Full-screen version of medication management: the reusable "常用藥" list, plus a
@@ -2472,7 +2383,7 @@ function RecordRow({ r, onSelect, selectMode, selected, onToggleSelect }) {
 // ---------- Calendar month view ----------
 // A month grid reads far faster than a scrolling list: each day is one small tile, and its
 // colour says how the day went, so a whole month is one glance instead of 30 cards.
-function CalendarView({ records, products, treatmentEvents = [], onSelect, onCreateDate, onTreatmentDate, monthOffset, onShiftMonth }) {
+function CalendarView({ records, products, onSelect, onCreateDate, monthOffset, onShiftMonth }) {
   const byDate = useMemo(() => {
     const m = new Map();
     records.forEach((r) => m.set(r.date, { ...r, _level: dayLevel(r, products).level }));
@@ -2505,8 +2416,8 @@ function CalendarView({ records, products, treatmentEvents = [], onSelect, onCre
   const flaggedDays = monthRecords.filter((r) => r._level === 1).length;
 
   return (
-    <div className="calendar-view" style={{width:"100%",minWidth:0,maxWidth:"100%",overflow:"hidden"}}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}> 
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <button onClick={() => onShiftMonth(-1)} aria-label="上個月" style={{
           width: 36, height: 36, borderRadius: 18, border: `1px solid ${COLORS.line}`, background: COLORS.card,
           color: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
@@ -2539,17 +2450,16 @@ function CalendarView({ records, products, treatmentEvents = [], onSelect, onCre
         </div>
       )}
 
-      <div style={{ display: "grid", width: "100%", minWidth: 0, gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, marginBottom: 6 }}>
         {["日", "一", "二", "三", "四", "五", "六"].map((w) => (
           <div key={w} style={{ textAlign: "center", fontSize: 11, color: COLORS.inkSoft, fontWeight: 600 }}>{w}</div>
         ))}
       </div>
 
-      <div className="calendar-days-grid" style={{ display: "grid", width: "100%", minWidth: 0, gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, alignItems:"stretch" }}> 
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
         {cells.map((d, i) => {
           if (d === null) return <div key={`x${i}`} />;
           const r = byDate.get(iso(d));
-          const hasTreatment = treatmentEvents.some(e=>e.date===iso(d));
           // One signal per tile. This grid answers "which days need a closer look?", so it
           // carries severity and nothing else — the three status dots and the target-tinted
           // gram colour used to pack five channels into a ~45px square that had to be
@@ -2567,11 +2477,11 @@ function CalendarView({ records, products, treatmentEvents = [], onSelect, onCre
           return (
             <button
               key={d}
-              onClick={() => (hasTreatment && !r && onTreatmentDate ? onTreatmentDate(iso(d)) : r ? onSelect(r.date) : onCreateDate && onCreateDate(iso(d)))}
-              disabled={!r && !onCreateDate && !hasTreatment}
+              onClick={() => (r ? onSelect(r.date) : onCreateDate && onCreateDate(iso(d)))}
+              disabled={!r && !onCreateDate}
               aria-label={r ? `查看 ${iso(d)} 的紀錄${needsAttention ? "（需留意）" : ""}` : onCreateDate ? `新增 ${iso(d)} 的紀錄` : undefined}
               style={{
-                width: "100%", maxWidth: "100%", height: "clamp(42px, 10vw, 78px)", boxSizing: "border-box", borderRadius: 12, padding: 2, position: "relative", minWidth: 0, minHeight: 0, overflow: "hidden",
+                aspectRatio: "1 / 1", borderRadius: 12, padding: 2,
                 // Food fills the tile (the palette is muted enough that a full grid of it
                 // stays calm), and severity rides on the border alone — two channels that
                 // don't compete for the same pixels.
@@ -2585,13 +2495,11 @@ function CalendarView({ records, products, treatmentEvents = [], onSelect, onCre
             >
               <span className="cal-day" style={{ fontSize: 13, fontWeight: 700, color: r ? COLORS.ink : COLORS.line }}>{d}</span>
               {r && <span className="cal-grams" style={{ fontSize: 10, lineHeight: 1, fontWeight: 600, color: COLORS.inkSoft }}>{total}g</span>}
-              {hasTreatment && <span style={{position:"absolute",right:2,bottom:2,lineHeight:0,pointerEvents:"none",background:r?sw.bg:COLORS.card,borderRadius:3,padding:1}}><Pill size={11} color={COLORS.accent}/></span>}
             </button>
           );
         })}
       </div>
 
-      {treatmentEvents.some(e=>e.date.startsWith(`${year}-${String(month+1).padStart(2,"0")}`)) && <div style={{display:"flex",alignItems:"center",gap:5,marginTop:12,fontSize:11,lineHeight:1.5,color:COLORS.inkSoft,clear:"both"}}><Pill size={14} style={{flexShrink:0}} color={COLORS.accent}/><span>藥丸＝治療變更日，分析請至「治療變更」查看</span></div>}
       {/* Which foods appear this month, in the same colours as the tiles */}
       {(() => {
         const used = [];
@@ -2632,7 +2540,7 @@ function CalendarView({ records, products, treatmentEvents = [], onSelect, onCre
   );
 }
 
-function History({ records, products, treatmentEvents = [], onTreatmentDate, petId, onSelect, onDeleteMany, onConfirm, role, existingDates, onAddRecord, onQuickAddProduct, onAddProduct, onEditProduct, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+function History({ records, products, petId, onSelect, onDeleteMany, onConfirm, role, existingDates, onAddRecord, onQuickAddProduct, onAddProduct, onEditProduct, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [search, setSearch] = useState("");
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [manualOpen, setManualOpen] = useState({}); // productId -> explicit true/false, overrides the default
@@ -2783,7 +2691,7 @@ function History({ records, products, treatmentEvents = [], onTreatmentDate, pet
 
       {view === "calendar" && records.length > 0 && (
         <CalendarView
-          records={records} products={products} treatmentEvents={treatmentEvents} onTreatmentDate={onTreatmentDate} onSelect={onSelect}
+          records={records} products={products} onSelect={onSelect}
           onCreateDate={role === "owner" ? (date) => { setAddDate(date); setAddOpen(true); } : undefined}
           monthOffset={monthOffset} onShiftMonth={(d) => setMonthOffset((m) => Math.min(0, m + d))}
         />
@@ -3405,7 +3313,6 @@ function App() {
   const [records, setRecords] = useState([]);
   const [medPresets, setMedPresets] = useState([]);
   const [medLogs, setMedLogs] = useState([]);
-  const [treatmentEvents, setTreatmentEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // {type:'addProduct'|'editProduct'|'dayPanel', payload}
   const [ownerPin, setOwnerPin] = useState(""); // "" = no PIN protection set
@@ -3474,16 +3381,16 @@ function App() {
   // Each pet keeps its own records and products, so switching pets reloads that pet's data
   const [petLoading, setPetLoading] = useState(false);
   useEffect(() => {
-    if (!petId) { setProducts([]); setRecords([]); setMedPresets([]); setMedLogs([]); setTreatmentEvents([]); return; }
+    if (!petId) { setProducts([]); setRecords([]); setMedPresets([]); setMedLogs([]); return; }
     let cancelled = false;
     setPetLoading(true);
     (async () => {
       try {
-        const [p, r, mp, ml, te] = await Promise.all([
+        const [p, r, mp, ml] = await Promise.all([
           loadKey(productsKey(petId)), loadKey(recordsKey(petId)),
-          loadKey(medPresetsKey(petId)), loadKey(medLogsKey(petId)), loadKey(treatmentEventsKey(petId)),
+          loadKey(medPresetsKey(petId)), loadKey(medLogsKey(petId)),
         ]);
-        if (!cancelled) { setProducts(p); setRecords(r); setMedPresets(mp); setMedLogs(ml); setTreatmentEvents(te); setLoadError(""); }
+        if (!cancelled) { setProducts(p); setRecords(r); setMedPresets(mp); setMedLogs(ml); setLoadError(""); }
       } catch (e) {
         console.error("pet data load failed", e);
         // Leave whatever is already in state alone; blanking it would make the UI look
@@ -3518,7 +3425,6 @@ function App() {
   const persistProducts = useCallback(async (next) => { setProducts(next); if (petId) reportSave(await saveKey(productsKey(petId), next)); }, [petId, reportSave]);
   const persistMedPresets = useCallback(async (next) => { setMedPresets(next); if (petId) reportSave(await saveKey(medPresetsKey(petId), next)); }, [petId, reportSave]);
   const persistMedLogs = useCallback(async (next) => { setMedLogs(next); if (petId) reportSave(await saveKey(medLogsKey(petId), next)); }, [petId, reportSave]);
-  const persistTreatmentEvents = useCallback(async (next) => { setTreatmentEvents(next); if(petId) reportSave(await saveKey(treatmentEventsKey(petId),next)); },[petId,reportSave]);
 
   // Tapping a preset for a given date: if it's already logged that day, un-log it (undo a
   // mis-tap); otherwise add a log entry copying the preset's current name/dose/note.
@@ -3669,13 +3575,12 @@ function App() {
     history: { label: "飲食日記", Icon: JournalIcon, desc: "新增紀錄、管理產品", bg: COLORS.blueSoft },
     export: { label: "匯出", Icon: Download, desc: "匯出 Excel／複製表格", bg: "#F2E9EB" },
     meds: { label: "用藥清單", Icon: Pill, desc: "管理常用藥", bg: "#E8EEF0" },
-    treatment: { label: "治療變更", Icon: Pill, desc: "換藥與效果追蹤", bg: "#E8EEF0" },
   };
   const tabs = role === "owner"
-    ? [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["meds", "用藥清單"], ["treatment", "治療變更"]]
-    : [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["meds", "用藥清單"], ["treatment", "治療變更"]];
+    ? [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["meds", "用藥清單"]]
+    : [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["meds", "用藥清單"]];
 
-  useEffect(() => { if (role === "vet" && tab && !["dashboard", "history", "export", "meds", "treatment"].includes(tab)) setTab(null); }, [role]); // eslint-disable-line
+  useEffect(() => { if (role === "vet" && tab && !["dashboard", "history", "export", "meds"].includes(tab)) setTab(null); }, [role]); // eslint-disable-line
 
   if (screen === "landing") {
     return (
@@ -3771,8 +3676,7 @@ function App() {
           .app-shell [style*="font-size: 14px"], .modal-sheet [style*="font-size: 14px"] { font-size: 16px !important; }
           .app-shell [style*="font-size: 15px"], .modal-sheet [style*="font-size: 15px"] { font-size: 17px !important; }
           /* Calendar tiles get very tall when the grid is wide; cap them and enlarge the numbers */
-          .app-shell [style*="aspect-ratio"]:not(.calendar-day-tile) { aspect-ratio: auto !important; min-height: 84px; }
-          .app-shell .calendar-days-grid button { min-height: 0 !important; max-width: 100% !important; }
+          .app-shell [style*="aspect-ratio"] { aspect-ratio: auto !important; min-height: 84px; }
           .app-shell .cal-day { font-size: 20px !important; }
           .app-shell .cal-grams { font-size: 15px !important; }
           .app-shell .cal-dots span { width: 8px !important; height: 8px !important; border-radius: 4px !important; }
@@ -3880,7 +3784,6 @@ function App() {
 
             </Card>
           )}
-          <TreatmentTracker compact events={treatmentEvents} records={records} role={role}/>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {tabs.map(([key]) => {
               const meta = TAB_META[key];
@@ -3922,7 +3825,7 @@ function App() {
             )}
             {tab === "history" && (
               <History
-                records={records} products={products} treatmentEvents={treatmentEvents} onTreatmentDate={()=>setTab("treatment")} petId={petId} onSelect={openDayByDate}
+                records={records} products={products} petId={petId} onSelect={openDayByDate}
                 onDeleteMany={deleteRecords} onConfirm={setConfirmDialog}
                 role={role} existingDates={existingDates}
                 onAddRecord={role === "owner" ? saveRecord : undefined}
@@ -3935,11 +3838,6 @@ function App() {
                 onManageMedPresets={role === "owner" ? () => setMedPresetsOpen(true) : undefined}
               />
             )}
-            {tab === "treatment" && <TreatmentTracker events={treatmentEvents} records={records} role={role}
-              onAdd={e=>persistTreatmentEvents([...treatmentEvents,e])}
-              onUpdate={e=>persistTreatmentEvents(treatmentEvents.map(x=>x.id===e.id?e:x))}
-              onDelete={id=>setConfirmDialog({message:"確定刪除這筆治療變更嗎？不會影響原本用藥及飲食日記。",onYes:()=>persistTreatmentEvents(treatmentEvents.filter(x=>x.id!==id))})}
-            />}
             {tab === "export" && <ExportPanel records={records} products={products} petName={currentPet?.name} />}
             {tab === "meds" && (
               <MedicationsScreen
