@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="theme-color" content="#C9D1DC" />
-<title>飲食記錄 · 療程整合版</title>
+<title>飲食記錄 · 用藥組合比較版</title>
 <meta name="apple-mobile-web-app-title" content="飲食記錄" />
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png" />
@@ -813,82 +813,109 @@ function MedPresetManager({ medPresets, onAdd, onRemove, onClose }) {
   );
 }
 
-// Treatment changes are separate from actual dose logs. Historical records remain untouched.
-// One shared analysis for both the homepage and the treatment history.
-// Observations describe timing, not medication efficacy or causation.
-function treatmentAnalysis(event, records, previousEvent=null, nextEvent=null) {
-  const ordered=[...records].filter(r=>r.date && r.date<=todayStr()).sort((a,b)=>a.date.localeCompare(b.date));
-  const before=ordered.filter(r=>r.date<event.date && (previousEvent?r.date>=previousEvent.date:true));
-  const after=ordered.filter(r=>r.date>=event.date && (!nextEvent||r.date<nextEvent.date));
-  const comparableBefore=previousEvent?before:before.slice(-Math.max(7,after.length));
-  const intake=r=>(Number(r.breakfast)||0)+(Number(r.dinner)||0)+(Number(r.bedtime)||0);
-  const avg=arr=>arr.length?arr.reduce((s,r)=>s+intake(r),0)/arr.length:null;
-  const pre=avg(comparableBefore),post=avg(after);
-  const recentDays=after.slice(-Math.min(3,after.length));
-  const recent=avg(recentDays);
-  const grams=n=>`${Math.round(n*10)/10}g`;
-  let foodOverall=!after.length?"這個階段還沒有進食紀錄。":pre===null?`這個階段平均每天吃 ${grams(post)}，目前沒有足夠的前期紀錄可以比較。`:Math.abs(post-pre)<2?`平均每天吃 ${grams(post)}，和上一階段差不多。`:`平均每天吃 ${grams(post)}，比上一階段${post>pre?"多":"少"}約 ${grams(Math.abs(post-pre))}。`;
-  const foodRecent=!recentDays.length?"還沒有近期進食紀錄。":recentDays.length===1?`最近一天吃了 ${grams(recent)}。`:Math.abs(recent-post)<2?`最近 ${recentDays.length} 天平均吃 ${grams(recent)}，與這階段的平均接近。`:`最近 ${recentDays.length} 天平均吃 ${grams(recent)}，比這階段平均${recent>post?"高":"低"}，${recent>post?"有回升跡象":"可以留意是否持續下降"}。`;
-  const stoolValues=arr=>arr.map(r=>Number(r.stool)).filter(n=>Number.isInteger(n)&&n>=1&&n<=7);
-  const count=arr=>{const v=stoolValues(arr);return {total:v.length,normal:v.filter(n=>n===3||n===4).length,hard:v.filter(n=>n<=2).length,soft:v.filter(n=>n>=6).length,slight:v.filter(n=>n===5).length};};
-  const old=count(comparableBefore),now=count(after),latest=count(recentDays);
-  const brief=x=>{if(!x.total)return "沒有排便紀錄";const parts=[];if(x.normal)parts.push(`${x.normal} 次正常`);if(x.hard)parts.push(`${x.hard} 次偏硬`);if(x.slight)parts.push(`${x.slight} 次稍軟`);if(x.soft)parts.push(`${x.soft} 次偏軟`);return parts.join("、");};
-  let stoolOverall;
-  if(!now.total)stoolOverall="這個階段還沒有排便紀錄。";
-  else if(!old.total)stoolOverall=`這個階段記錄到 ${brief(now)}，前一階段沒有可比較的便便紀錄。`;
-  else {
-    const difference=now.normal/now.total-old.normal/old.total;
-    const verdict=difference>0.1?"目前正常便便所占的比例較高。":difference< -0.1?"目前正常便便所占的比例較低。":"目前正常便便的情況與前一階段接近。";
-    stoolOverall=`上一階段是 ${brief(old)}；這個階段是 ${brief(now)}。${verdict}`;
+// Regimen phases are derived from the original treatment events; Firebase data is not migrated.
+// Every change date starts a new combination. Several changes on the same date form one phase.
+function buildRegimenPhases(events) {
+  const ordered=[...(events||[])].filter(e=>e&&e.date&&e.name).sort((a,b)=>a.date.localeCompare(b.date)||String(a.id).localeCompare(String(b.id)));
+  const byDate=[];
+  ordered.forEach(e=>{let phase=byDate[byDate.length-1];if(!phase||phase.date!==e.date){phase={date:e.date,events:[]};byDate.push(phase);}phase.events.push(e);});
+  const current=new Map();
+  return byDate.map((phase,i)=>{
+    const before=new Map(current);
+    phase.events.forEach(e=>{
+      const key=String(e.name).trim().toLocaleLowerCase();
+      const stopped=String(e.kind||'').includes('停藥')||/^(停用|停止|0\s*(mg|cc|ml|顆|錠)?$)/i.test(String(e.after||'').trim());
+      if(stopped)current.delete(key);
+      else current.set(key,{name:e.name,dose:e.after||'劑量未記錄'});
+    });
+    return {date:phase.date,end:byDate[i+1]?.date||null,events:phase.events,before:[...before.values()],meds:[...current.values()]};
+  });
+}
+function phaseRecords(records,start,end) {
+  return [...(records||[])].filter(r=>r.date&&r.date>=start&&r.date<=todayStr()&&(!end||r.date<end)).sort((a,b)=>a.date.localeCompare(b.date));
+}
+function phaseMetrics(rs){
+  const food=rs.map(r=>[r.breakfast,r.dinner,r.bedtime].reduce((s,n)=>s+(Number(n)||0),0));
+  const avg=food.length?food.reduce((a,b)=>a+b,0)/food.length:null;
+  const stools=rs.map(r=>Number(r.stool)).filter(n=>Number.isInteger(n)&&n>=1&&n<=7);
+  const vomitRecorded=rs.filter(r=>r.vomit!==null&&r.vomit!==undefined&&r.vomit!=='');
+  const vomitDays=vomitRecorded.filter(r=>Number(r.vomit)>0).length;
+  return {days:rs.length,avg,stools,vomitDays,vomitRecorded:vomitRecorded.length};
+}
+function stoolDescription(stools){
+  if(!stools.length)return '大便沒有足夠的紀錄';
+  const hard=stools.filter(x=>x<=2).length,normal=stools.filter(x=>x===3||x===4).length,soft=stools.filter(x=>x>=5).length;
+  if(normal===stools.length)return '大便紀錄都是正常形態';
+  if(hard>normal&&hard>=soft)return '大便經常偏硬';
+  if(soft>normal&&soft>hard)return '大便經常偏軟';
+  if(normal>=hard&&normal>=soft)return '大便大多是正常形態，但偶爾偏硬或偏軟';
+  return '大便有時偏硬、有時偏軟，形態不太固定';
+}
+function compareRegimen(before,after){
+  if(!after.days)return '這組用藥剛開始，還沒有健康日記可以整理。';
+  const parts=[];
+  if(after.avg!==null){
+    if(before&&before.avg!==null){const diff=after.avg-before.avg;parts.push(Math.abs(diff)<3?'這段時間辛巴吃的量和上一組差不多':`這段時間辛巴平均每天吃的量比上一組${diff>0?'多':'少'}一些`);}
+    else parts.push('這段時間已有進食紀錄，但還沒有前一組可以比較');
   }
-  const stoolRecent=!latest.total?"最近沒有便便紀錄。":latest.normal===latest.total?`最近 ${latest.total} 次便便都正常，目前排便穩定。`:latest.hard?`最近 ${latest.total} 次便便有 ${latest.hard} 次偏硬，排便還不算穩定。`:latest.soft?`最近 ${latest.total} 次便便有 ${latest.soft} 次偏軟，仍有起伏。`:`最近的便便有 ${brief(latest)}，還需要繼續觀察。`;
-  return {overall:`${foodOverall} ${stoolOverall}`,recentText:`${foodRecent} ${stoolRecent}`};
+  if(after.stools.length){
+    const now=stoolDescription(after.stools);
+    if(before&&before.stools.length)parts.push(`上一組用藥期間${stoolDescription(before.stools)}，這一組則${now}`);
+    else parts.push(`這段時間${now}`);
+  }
+  if(after.vomitRecorded){
+    if(before&&before.vomitRecorded){
+      const rate1=before.vomitDays/before.vomitRecorded,rate2=after.vomitDays/after.vomitRecorded;
+      parts.push(Math.abs(rate2-rate1)<0.08?'嘔吐的記錄情況和上一組接近':rate2>rate1?'有記錄到嘔吐的日子比上一組頻繁':'有記錄到嘔吐的日子比上一組少');
+    } else parts.push(after.vomitDays?'這段時間有嘔吐紀錄':'已填寫的日記中沒有記錄到嘔吐');
+  }
+  return (parts.length?parts.join('；')+'。':'這段期間的健康紀錄還不足以整理。');
 }
 function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false}) {
-  const [open,setOpen]=useState(false);
-  const [editing,setEditing]=useState(null);
-  const [name,setName]=useState("");
-  const [kind,setKind]=useState("調整劑量／頻率");
-  const [date,setDate]=useState(todayStr());
-  const [before,setBefore]=useState("");
-  const [after,setAfter]=useState("");
-  const [note,setNote]=useState("");
-  const [active,setActive]=useState(true);
-  const reset=()=>{setEditing(null);setName("");setKind("調整劑量／頻率");setDate(todayStr());setBefore("");setAfter("");setNote("");setActive(true);setOpen(false);};
-  const edit=e=>{setEditing(e.id);setName(e.name);setKind(e.kind);setDate(e.date);setBefore(e.before||"");setAfter(e.after||"");setNote(e.note||"");setActive(e.active!==false);setOpen(true);};
-  const save=()=>{if(!name.trim()||!date||!after.trim())return;const data={id:editing||uid(),name:name.trim(),kind,date,before:before.trim(),after:after.trim(),note:note.trim(),active};if(editing)onUpdate(data);else onAdd(data);reset();};
-  const sorted=[...events].sort((a,b)=>a.date.localeCompare(b.date));
-  // Same-name changes are successive stages of one treatment. Original events stay intact.
-  const groupKey=e=>String(e.name||"").trim().toLocaleLowerCase();
-  const groups=new Map();
-  sorted.forEach(e=>{const k=groupKey(e);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e);});
-  const latest=[...groups.values()].map(g=>g[g.length-1]).sort((a,b)=>b.date.localeCompare(a.date));
-  const shown=latest; // One card per medicine; preserve all stages and historical records.
-  // The homepage must not silently disappear when tracking data is absent.
-  const stageContext=e=>{const stages=groups.get(groupKey(e))||[];const index=stages.findIndex(x=>x.id===e.id);return {stages,index,previous:stages[index-1]||null,next:stages[index+1]||null};};
-  return <div style={{display:"flex",flexDirection:"column",gap:12}}>
-    {!compact&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div style={{fontWeight:700,color:COLORS.ink}}>治療歷程</div>{role==="owner"&&<Btn onClick={()=>setOpen(v=>!v)}><Plus size={14}/>記錄變更</Btn>}</div>}
-    {shown.map(e=>{const ctx=stageContext(e);const a=treatmentAnalysis(e,records,ctx.previous,ctx.next);return <div key={e.id} style={{background:compact?COLORS.accentSoft:COLORS.card,border:`1px solid ${COLORS.line}`,borderRadius:12,padding:13,marginBottom:compact?0:3}}>
-      <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"center"}}><div style={{fontSize:14,fontWeight:700,color:COLORS.ink,display:"flex",gap:7,alignItems:"center"}}><Pill size={16} color={COLORS.accent}/>{e.name} · 治療觀察</div><span style={{fontSize:11,color:COLORS.inkSoft,whiteSpace:"nowrap"}}>{e.date}</span></div>
-      <div style={{fontSize:12,color:COLORS.inkSoft,marginTop:6}}>目前階段：{e.after} {ctx.previous?`（上一階段：${ctx.previous.after}）`:""}</div>
-      <div style={{fontSize:13,color:COLORS.ink,marginTop:12,lineHeight:1.85}}><strong>整體表現</strong><div style={{marginTop:3}}>{a.overall}</div></div>
-      <div style={{fontSize:13,color:COLORS.ink,marginTop:10,lineHeight:1.85}}><strong>近期變化</strong><div style={{marginTop:3}}>{a.recentText}</div></div>
-      <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:8,lineHeight:1.6}}>觀察到的變化不一定由此藥物造成，飼料及其他治療也可能有影響。</div>
-      {!compact&&<div style={{marginTop:10,paddingTop:8,borderTop:`1px solid ${COLORS.line}`}}><div style={{fontSize:12,fontWeight:700,color:COLORS.ink,marginBottom:6}}>劑量調整歷程 · {ctx.stages.length} 個階段</div>{ctx.stages.map((stage,i)=><div key={stage.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"5px 0",fontSize:12,color:COLORS.inkSoft}}><span>{stage.date} {stage.kind}</span><span>{stage.after}{i===ctx.stages.length-1?" · 目前":""}</span>{role==="owner"&&<Btn variant="ghost" onClick={()=>edit(stage)}>編輯</Btn>}</div>)}</div>}
-      {!compact&&e.note&&<div style={{fontSize:12,color:COLORS.inkSoft,marginTop:5}}>補充：{e.note}</div>}
-      {!compact&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}><span style={{fontSize:11,color:COLORS.inkSoft}}>{e.active===false?"已停止追蹤（保留歷程）":"持續觀察中"}</span>{role==="owner"&&<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>edit(e)}>編輯目前階段</Btn><Btn variant="ghost" onClick={()=>onDelete(e.id)}>刪除</Btn></div>}</div>}
-    </div>})}
-    {shown.length===0&&<div style={{background:compact?COLORS.accentSoft:COLORS.card,border:`1px solid ${COLORS.line}`,borderRadius:12,padding:14,fontSize:13,color:COLORS.inkSoft}}><div style={{fontWeight:700,marginBottom:5,color:COLORS.ink}}>治療追蹤</div>尚無治療變更紀錄。{compact?"請至下方「治療變更」新增或確認紀錄。":"可以慢慢補登過去的換藥日期。"}</div>}
-    {!compact&&open&&role==="owner"&&<Card><div style={{fontWeight:700,marginBottom:10}}>記錄治療變更</div><div style={{display:"flex",flexDirection:"column",gap:9}}>
-      <select value={kind} onChange={e=>setKind(e.target.value)} style={inputStyle}>{["調整劑量／頻率","更換藥物／成分","開始保健食品","停藥","其他治療變更"].map(k=><option key={k}>{k}</option>)}</select>
+  const [open,setOpen]=useState(false),[editing,setEditing]=useState(null),[selected,setSelected]=useState(null),[details,setDetails]=useState(false);
+  const [name,setName]=useState(''),[kind,setKind]=useState('調整劑量／頻率'),[date,setDate]=useState(todayStr());
+  const [before,setBefore]=useState(''),[after,setAfter]=useState(''),[note,setNote]=useState(''),[active,setActive]=useState(true);
+  const reset=()=>{setEditing(null);setName('');setKind('調整劑量／頻率');setDate(todayStr());setBefore('');setAfter('');setNote('');setActive(true);setOpen(false);};
+  const edit=e=>{setEditing(e.id);setName(e.name);setKind(e.kind);setDate(e.date);setBefore(e.before||'');setAfter(e.after||'');setNote(e.note||'');setActive(e.active!==false);setOpen(true);};
+  const save=()=>{if(!name.trim()||!date||(!after.trim()&&!kind.includes('停藥')))return;const data={id:editing||uid(),name:name.trim(),kind,date,before:before.trim(),after:kind.includes('停藥')?'停用':after.trim(),note:note.trim(),active};if(editing)onUpdate(data);else onAdd(data);reset();};
+  const phases=buildRegimenPhases(events);
+  const current=phases[phases.length-1];
+  const currentIndex=selected===null?phases.length-1:Math.max(0,Math.min(selected,phases.length-1));
+  const phase=phases[currentIndex],prior=phases[currentIndex-1];
+  const currentRecords=phaseRecords(records,phase?.date||'9999-12-31',phase?.end);
+  const previousRecords=prior?phaseRecords(records,prior.date,prior.end):phase?([...records].filter(r=>r.date&&r.date<phase.date).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,Math.max(7,currentRecords.length))):[];
+  const summary=phase?compareRegimen(phaseMetrics(previousRecords),phaseMetrics(currentRecords)):'';
+  const recent=phaseMetrics(currentRecords.slice(-3));
+  const recentText=recent.days?`最近${recent.days===1?'一天':`${recent.days}天`}，${recent.avg!==null?`平均每天吃約 ${Math.round(recent.avg)}g，`:''}${stoolDescription(recent.stools)}${recent.vomitRecorded?`，${recent.vomitDays?'有嘔吐紀錄':'沒有記錄到嘔吐'}`:''}。`:'目前這一組還沒有最近的健康紀錄。';
+  const medList=phase?.meds||[];
+  const showMeds=()=>medList.length?<div style={{display:'flex',flexDirection:'column',gap:7}}>{medList.map(m=><div key={m.name} style={{display:'flex',justifyContent:'space-between',gap:10,fontSize:13}}><strong>{m.name}</strong><span>{m.dose}</span></div>)}</div>:<div style={{fontSize:12,color:COLORS.inkSoft}}>目前沒有從治療變更紀錄確認到持續使用的藥物。</div>;
+  return <div style={{display:'flex',flexDirection:'column',gap:12}}>
+    {!compact&&<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}><div style={{fontWeight:700,color:COLORS.ink}}>用藥組合歷程</div>{role==='owner'&&<Btn onClick={()=>setOpen(v=>!v)}><Plus size={14}/>記錄變更</Btn>}</div>}
+    <div style={{background:compact?COLORS.accentSoft:COLORS.card,border:`1px solid ${COLORS.line}`,borderRadius:12,padding:14}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}><div style={{display:'flex',alignItems:'center',gap:7,fontWeight:700,color:COLORS.ink}}><Pill size={17} color={COLORS.accent}/>{compact?'目前用藥組合':'用藥組合觀察'}</div><span style={{fontSize:11,color:COLORS.inkSoft}}>{phase?`${phase.date} 起`:'尚無變更紀錄'}</span></div>
+      <div style={{marginTop:12,padding:12,borderRadius:10,background:COLORS.card}}>{showMeds()}</div>
+      {phase?<>
+        <div style={{marginTop:12,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>{compact?'這段時間的狀況':'和上一組有什麼不同？'}</strong><div style={{marginTop:4}}>{summary}</div></div>
+        {!compact&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>最近幾天</strong><div>{recentText}</div></div>}
+        {compact?<button onClick={()=>{const btn=document.querySelector('[data-treatment-open]');if(btn)btn.click();}} style={{border:`1px solid ${COLORS.line}`,background:COLORS.card,color:COLORS.accent,borderRadius:9,padding:'10px 12px',fontSize:13,fontWeight:700,marginTop:12,width:'100%',cursor:'pointer'}}>查看前後組合差異 ›</button>:<>
+          <div style={{display:'flex',gap:7,marginTop:12,flexWrap:'wrap'}}>{phases.map((p,i)=><button key={p.date} onClick={()=>{setSelected(i);setDetails(false)}} style={{border:`1px solid ${i===currentIndex?COLORS.accent:COLORS.line}`,borderRadius:9,background:i===currentIndex?COLORS.accentSoft:COLORS.card,color:COLORS.ink,padding:'7px 9px',fontSize:12,cursor:'pointer'}}>{p.date}</button>)}</div>
+          <button onClick={()=>setDetails(v=>!v)} style={{border:'none',background:'transparent',color:COLORS.accent,fontSize:13,fontWeight:700,padding:'12px 0 4px',cursor:'pointer'}}>{details?'收起組合明細':'查看上一組與這一組的藥物差異'} ▾</button>
+          {details&&<div style={{background:COLORS.accentSoft,borderRadius:10,padding:12,fontSize:12,lineHeight:1.9}}><strong>上一組：{prior?.date||'開始追蹤前'}</strong><div>{prior?.meds.length?prior.meds.map(m=>`${m.name} ${m.dose}`).join('、'):'沒有完整的上一組用藥資料'}</div><strong>這一組：{phase.date}</strong><div>{phase.meds.length?phase.meds.map(m=>`${m.name} ${m.dose}`).join('、'):'目前未記錄持續用藥'}</div><strong>這次異動</strong><div>{phase.events.map(e=>`${e.name}：${e.before?e.before+' → ':''}${e.after||'停用'}`).join('；')}</div></div>}
+          <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:10}}>這是用藥組合期間的健康紀錄比較，不代表變化是某一種藥造成的。飼料、飲水及其他未登錄的因素也可能有影響。</div>
+          <div style={{fontWeight:700,fontSize:12,marginTop:14,marginBottom:5}}>這個階段的變更紀錄</div>
+          {phase.events.map(e=><div key={e.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,fontSize:12,padding:'6px 0',borderTop:`1px solid ${COLORS.line}`}}><span>{e.name} · {e.kind} · {e.after}</span>{role==='owner'&&<div style={{display:'flex',gap:4}}><Btn variant="ghost" onClick={()=>edit(e)}>編輯</Btn><Btn variant="ghost" onClick={()=>onDelete(e.id)}>刪除</Btn></div>}</div>)}
+        </>}
+      </>:<div style={{fontSize:12,color:COLORS.inkSoft,marginTop:10}}>請到「治療變更」記錄第一次用藥組合。原有每日用藥日記不會被更動。</div>}
+    </div>
+    {!compact&&open&&role==='owner'&&<Card><div style={{fontWeight:700,marginBottom:10}}>記錄用藥組合變更</div><div style={{display:'flex',flexDirection:'column',gap:9}}>
+      <select value={kind} onChange={e=>setKind(e.target.value)} style={inputStyle}>{['調整劑量／頻率','更換藥物／成分','開始保健食品','停藥','其他治療變更'].map(k=><option key={k}>{k}</option>)}</select>
       <input style={inputStyle} type="date" value={date} onChange={e=>setDate(e.target.value)}/>
       <input style={inputStyle} placeholder="藥物或保健食品名稱" value={name} onChange={e=>setName(e.target.value)}/>
       <input style={inputStyle} placeholder="變更前（可留空）" value={before} onChange={e=>setBefore(e.target.value)}/>
-      <input style={inputStyle} placeholder="變更後（必填）" value={after} onChange={e=>setAfter(e.target.value)}/>
-      <textarea style={inputStyle} rows={2} placeholder="原因或成分補充（選填）" value={note} onChange={e=>setNote(e.target.value)}/>
-      <label style={{fontSize:12,color:COLORS.inkSoft}}><input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)}/> 持續在首頁追蹤</label>
-      <div style={{fontSize:11,color:COLORS.inkSoft}}>試用版僅記錄治療變更，不會自動修改每日用藥排程。若劑次改變，請另在「用藥清單」調整。</div>
-      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn variant="ghost" onClick={reset}>取消</Btn><Btn onClick={save} disabled={!name.trim()||!after.trim()||!date}>儲存變更</Btn></div>
+      {!kind.includes('停藥')&&<input style={inputStyle} placeholder="變更後（必填）" value={after} onChange={e=>setAfter(e.target.value)}/>}
+      <textarea style={inputStyle} rows={2} placeholder="備註（選填）" value={note} onChange={e=>setNote(e.target.value)}/>
+      <div style={{fontSize:11,color:COLORS.inkSoft}}>同一天的多項調整會合併成一組。這裡只記錄組合變更，不會自動改動每日用藥排程；尚未補登的藥物不會憑空列入。</div>
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}><Btn variant="ghost" onClick={reset}>取消</Btn><Btn onClick={save} disabled={!name.trim()||!date||(!after.trim()&&!kind.includes('停藥'))}>儲存變更</Btn></div>
     </div></Card>}
   </div>;
 }
@@ -3661,7 +3688,7 @@ function App() {
     history: { label: "飲食日記", Icon: JournalIcon, desc: "新增紀錄、管理產品", bg: COLORS.blueSoft },
     export: { label: "匯出", Icon: Download, desc: "匯出 Excel／複製表格", bg: "#F2E9EB" },
     meds: { label: "用藥清單", Icon: Pill, desc: "管理常用藥", bg: "#E8EEF0" },
-    treatment: { label: "治療變更", Icon: Pill, desc: "換藥與效果追蹤", bg: "#E8EEF0" },
+    treatment: { label: "治療變更", Icon: Pill, desc: "用藥組合前後比較", bg: "#E8EEF0" },
   };
   const tabs = role === "owner"
     ? [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["meds", "用藥清單"], ["treatment", "治療變更"]]
@@ -3879,7 +3906,7 @@ function App() {
               return (
                 <button
                   key={key}
-                  onClick={() => setTab(key)}
+                  onClick={() => setTab(key)} data-treatment-open={key === "treatment" ? "true" : undefined}
                   style={{
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
                     padding: "22px 12px", borderRadius: 18, border: `1px solid ${COLORS.line}`,
