@@ -869,7 +869,7 @@ function compareRegimen(before,after){
       parts.push(Math.abs(rate2-rate1)<0.08?'嘔吐的記錄情況和上一組接近':rate2>rate1?'有記錄到嘔吐的日子比上一組頻繁':'有記錄到嘔吐的日子比上一組少');
     } else parts.push(after.vomitDays?'這段時間有嘔吐紀錄':'已填寫的日記中沒有記錄到嘔吐');
   }
-  return (parts.length?parts.join('；')+'。':'這段期間的健康紀錄還不足以整理。');
+  return (parts.length?parts.map(p=>p.replace(/^[這]段時間/, '這段時間')).join('。')+'。':'這段期間還沒有足夠的日記可以整理。');
 }
 function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false}) {
   const [open,setOpen]=useState(false),[editing,setEditing]=useState(null),[selected,setSelected]=useState(null),[details,setDetails]=useState(false);
@@ -886,7 +886,7 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
   const previousRecords=prior?phaseRecords(records,prior.date,prior.end):phase?([...records].filter(r=>r.date&&r.date<phase.date).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,Math.max(7,currentRecords.length))):[];
   const summary=phase?compareRegimen(phaseMetrics(previousRecords),phaseMetrics(currentRecords)):'';
   const recent=phaseMetrics(currentRecords.slice(-3));
-  const recentText=recent.days?`最近${recent.days===1?'一天':`${recent.days}天`}，${recent.avg!==null?`平均每天吃約 ${Math.round(recent.avg)}g，`:''}${stoolDescription(recent.stools)}${recent.vomitRecorded?`，${recent.vomitDays?'有嘔吐紀錄':'沒有記錄到嘔吐'}`:''}。`:'目前這一組還沒有最近的健康紀錄。';
+  const recentText=recent.days?`最近幾天，${recent.avg!==null?'有持續記錄食量，':''}${stoolDescription(recent.stools)}${recent.vomitRecorded?`，${recent.vomitDays?'也有嘔吐紀錄':'已填寫的日記沒有記錄到嘔吐'}`:'，嘔吐情況尚未完整填寫'}。`:'目前這一組還沒有最近的健康紀錄。';
   const medList=phase?.meds||[];
   const showMeds=()=>medList.length?<div style={{display:'flex',flexDirection:'column',gap:7}}>{medList.map(m=><div key={m.name} style={{display:'flex',justifyContent:'space-between',gap:10,fontSize:13}}><strong>{m.name}</strong><span>{m.dose}</span></div>)}</div>:<div style={{fontSize:12,color:COLORS.inkSoft}}>目前沒有從治療變更紀錄確認到持續使用的藥物。</div>;
   return <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -3097,87 +3097,45 @@ function ExportPanel({ records, products, petName }) {
 }
 
 
-// ---------- Evidence-based food trial analysis (computed locally, no extra cloud writes) ----------
+// ---------- Conversational feed observation; no scores or causal claims ----------
 function HealthSummary({ records, products, medLogs = [] }) {
   const [selected, setSelected] = useState("");
-  if (!records.length) return null;
-  const ordered = records.slice().filter(r => r.date).sort((a,b)=>a.date.localeCompare(b.date));
-  const ids = [...new Set(ordered.map(r=>r.productId).filter(Boolean))];
-  const options = ids.map(id => ({ id, name: products.find(p=>p.id===id)?.name || "未命名飼料" }));
-  const chosen = ids.includes(selected) ? selected : ordered[ordered.length-1].productId;
+  const ordered = (records || []).filter(r => r.date && r.productId).slice().sort((a,b) => a.date.localeCompare(b.date));
+  if (!ordered.length) return null;
+  const ids = [...new Set(ordered.map(r => r.productId))];
+  const options = ids.map(id => ({id, name: products.find(p => p.id === id)?.name || "未命名飼料"}));
+  const chosen = ids.includes(selected) ? selected : ordered[ordered.length - 1].productId;
   const trial = ordered.filter(r => r.productId === chosen);
-  if (!trial.length) return null;
-  const productName = options.find(o=>o.id===chosen)?.name || "目前飼料";
-  const target = Number(products.find(p=>p.id===chosen)?.dailyTarget) || 0;
-  const n = trial.length;
-  const sumFood = r => (Number(r.breakfast)||0)+(Number(r.dinner)||0)+(Number(r.bedtime)||0);
-  const avg = arr => arr.length ? arr.reduce((a,r)=>a+sumFood(r),0)/arr.length : 0;
-  const vomit = arr => arr.filter(r=>Number(r.vomit)>0).length;
-  const hard = arr => arr.filter(r=>Number(r.stool)>0 && Number(r.stool)<=2).length;
-  const soft = arr => arr.filter(r=>Number(r.stool)>=6).length;
-  const stressed = arr => arr.filter(r=>String(r.stress||"").trim()).length;
-  const pct = target ? Math.round(avg(trial)/target*100) : null;
-  const last = trial.slice(-14), previous = trial.slice(-28,-14);
-  const rate = (x,y) => y.length ? Math.round(x(y)/y.length*100) : 0;
-  // Descriptive index only. Missing mental/stool values are excluded, not treated as healthy.
-  const score = arr => {
-    if (!arr.length) return null;
-    const parts = [];
-    if (target > 0) parts.push({weight:30,value:Math.max(0,Math.min(1,avg(arr)/target))});
-    // Vomiting is explicitly recorded as 0 when absent in the daily form.
-    const vomitingRecords = arr.filter(r => r.vomit !== null && r.vomit !== undefined && r.vomit !== "");
-    if (vomitingRecords.length) parts.push({weight:25,value:1-vomit(vomitingRecords)/vomitingRecords.length});
-    const stoolRecords = arr.filter(r => r.stool !== null && r.stool !== undefined && r.stool !== "" && Number(r.stool)>0);
-    if (stoolRecords.length) parts.push({weight:25,value:1-(hard(stoolRecords)+soft(stoolRecords))/stoolRecords.length});
-    const mentalRecords = arr.filter(r => r.mental !== null && r.mental !== undefined && r.mental !== "" && Number(r.mental)>0);
-    if (mentalRecords.length) parts.push({weight:20,value:1-mentalRecords.filter(r=>Number(r.mental)<=2).length/mentalRecords.length});
-    const weight = parts.reduce((total,p)=>total+p.weight,0);
-    return weight ? Math.round(100*parts.reduce((total,p)=>total+p.weight*p.value,0)/weight) : null;
-  };
-  const latestScore = score(last), priorScore = score(previous);
-  const trialDates = new Set(trial.map(r=>r.date));
-  const hasMedicationRecords = medLogs.some(l=>trialDates.has(l.date));
-  const tone = periodLevel(trial,products);
-  // Explainable, evidence-linked assessment. This is local rule-based analysis, not an LLM.
-  const poorIntake = pct !== null && pct < 80;
-  const persistentHard = hard(trial) / n >= 0.3;
-  const frequentVomit = vomit(trial) / n >= 0.1;
-  const improved = previous.length >= 5 && last.length >= 5 && avg(last) >= avg(previous) * 1.15 && avg(last)-avg(previous)>=3;
-  const declined = previous.length >= 5 && last.length >= 5 && avg(last) <= avg(previous) * 0.85 && avg(previous)-avg(last)>=3;
-  const symptoms = [poorIntake, persistentHard, frequentVomit].filter(Boolean).length;
-  const enough = n >= 7 && (target > 0 || trial.some(r=>Number(r.stool)>0 || Number(r.vomit)>0));
-  const assessment = !enough
-    ? {title:"資料不足，尚不能評價", color:COLORS.inkSoft}
-    : symptoms >= 2 || (symptoms >= 1 && declined)
-      ? {title:"整體表現仍有明顯問題",color:COLORS.danger}
-      : symptoms === 1 || declined
-        ? {title:"部分表現尚不理想",color:COLORS.danger}
-        : {title:"紀錄表現相對穩定",color:COLORS.accent};
-  const evidence = [];
-  if (target > 0) evidence.push(`平均進食 ${avg(trial).toFixed(1)}g／天，為設定目標的 ${pct}%。${poorIntake?"長期進食量偏低，是不利訊號。":"未見明顯的長期進食不足訊號。"}`);
-  if (n >= 7) evidence.push(`${n} 個紀錄日中，嘔吐 ${vomit(trial)} 天（${rate(vomit,trial)}%）、偏硬便 ${hard(trial)} 天（${rate(hard,trial)}%）、偏軟便 ${soft(trial)} 天。${persistentHard?"偏硬便頻繁，不能只憑近期食慾改善認定整體適應良好。":""}`);
-  if (previous.length >= 5) evidence.push(`最近 ${last.length} 個紀錄日平均 ${avg(last).toFixed(1)}g，前 ${previous.length} 個為 ${avg(previous).toFixed(1)}g。${improved?"近期進食量有改善。":declined?"近期進食量下降，值得留意。":"尚未呈現明確的進食量大幅變化。"}`);
-  const assessmentCaveat = `這是 ${productName} 使用期間的「症狀與進食表現」評價，不等於已證明飼料本身適合或不適合。${hasMedicationRecords?"期間有用藥相關紀錄，可能影響食慾及排便；提到藥名不代表調整劑量。":"仍須考慮未完整記錄的用藥、混餵及其他因素。"}`;
+  const productName = options.find(p => p.id === chosen)?.name || "這款飼料";
+  const last = trial.slice(-14);
+  const previous = trial.slice(-28, -14);
+  const recent = phaseMetrics(last);
+  const earlier = phaseMetrics(previous);
+  const sentences = [];
+  if (recent.avg !== null) {
+    if (previous.length && earlier.avg !== null) {
+      const diff = recent.avg - earlier.avg;
+      sentences.push(Math.abs(diff) < 3 ? "最近吃的量和前一段時間差不多" : `最近吃的量比前一段時間${diff > 0 ? "多" : "少"}一些`);
+    } else sentences.push("這段時間有記下每天吃的量，還沒有更早的同款飼料紀錄可以比較");
+  }
+  if (recent.stools.length) {
+    const now = stoolDescription(recent.stools);
+    sentences.push(previous.length && earlier.stools.length ? `之前${stoolDescription(earlier.stools)}，最近則${now}` : `最近${now}`);
+  } else sentences.push("最近沒有填寫大便形態，暫時看不出排便的變化");
+  if (recent.vomitRecorded) {
+    if (earlier.vomitRecorded) {
+      const oldRate = earlier.vomitDays / earlier.vomitRecorded;
+      const newRate = recent.vomitDays / recent.vomitRecorded;
+      sentences.push(Math.abs(oldRate-newRate)<0.08 ? "有記錄到嘔吐的情況和前一段接近" : `有記錄到嘔吐的日子比前一段${newRate>oldRate?'多':'少'}`);
+    } else sentences.push(recent.vomitDays ? "最近有記錄到嘔吐" : "最近已填寫的日記沒有記錄到嘔吐");
+  } else sentences.push("最近沒有填寫嘔吐情況，不能當作沒有吐");
   return (
-    <Card style={{ marginBottom:12 }}>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-        <div style={{fontSize:24}}>✦</div>
-        <div style={{flex:1,minWidth:0}}><div style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>AI 分析診斷</div><div style={{fontSize:11,color:COLORS.inkSoft}}>飲食試驗資料分析 · 非臨床診斷</div></div>
-        <span style={{fontSize:12,color:tone.color,fontWeight:700}}>{tone.word}</span>
-      </div>
-      <select value={chosen||""} onChange={e=>setSelected(e.target.value)} style={{...inputStyle,width:"100%",marginBottom:12}}>
-        {options.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
-      </select>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-        <div style={{background:COLORS.accentSoft,borderRadius:12,padding:12}}><div style={{fontSize:11,color:COLORS.inkSoft}}>近期紀錄指標</div><div style={{fontSize:23,fontWeight:800,color:COLORS.accent}}>{latestScore}<span style={{fontSize:12,fontWeight:400}}> / 100</span></div><div style={{fontSize:11,color:COLORS.inkSoft}}>{priorScore!==null?`較前期 ${latestScore-priorScore>=0?"+":""}${latestScore-priorScore} 分`:"前期資料不足"}</div></div>
-        <div style={{background:COLORS.accentSoft,borderRadius:12,padding:12}}><div style={{fontSize:11,color:COLORS.inkSoft}}>同飼料觀察</div><div style={{fontSize:23,fontWeight:800,color:COLORS.accent}}>{n}<span style={{fontSize:12,fontWeight:400}}> 天</span></div><div style={{fontSize:11,color:COLORS.inkSoft}}>嘔吐 {vomit(trial)} 天 · 壓力 {stressed(trial)} 天</div></div>
-      </div>
-      <div style={{background:COLORS.accentSoft,borderRadius:12,padding:12,marginBottom:10}}>
-        <div style={{fontSize:11,fontWeight:700,color:COLORS.inkSoft,marginBottom:5}}>這款飼料的整體評價</div>
-        <div style={{fontSize:17,fontWeight:800,color:assessment.color,marginBottom:7}}>{assessment.title}</div>
-        <div style={{fontSize:13,lineHeight:1.75,color:COLORS.ink}}>{evidence.slice(0,3).join(" ") || "尚無足夠的完整紀錄可作判斷。"}</div>
-        <div style={{fontSize:12,lineHeight:1.7,color:COLORS.inkSoft,marginTop:8}}>{assessmentCaveat}</div>
-      </div>
+    <Card style={{marginBottom:14}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}><JournalIcon size={18} color={COLORS.accent}/><div style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>飼料分析</div></div>
+      <div style={{fontSize:12,color:COLORS.inkSoft,marginBottom:12}}>看看吃這款飼料時，辛巴的身體狀況</div>
+      <select value={chosen} onChange={e=>setSelected(e.target.value)} style={{...inputStyle,width:'100%',marginBottom:12}}>{options.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+      <div style={{fontSize:13,lineHeight:1.9,color:COLORS.ink}}><strong>{productName} · 最近的觀察</strong><div style={{marginTop:6}}>{sentences.join('，')}。</div></div>
+      <div style={{fontSize:12,lineHeight:1.7,color:COLORS.inkSoft,marginTop:10}}>這裡整理的是吃這款飼料期間的紀錄。若同時有調藥、改變飲水或混餵其他食物，也可能一起影響狀況，不能只憑這些變化判斷飼料的效果。</div>
     </Card>
   );
 }
@@ -3892,14 +3850,14 @@ function App() {
         ) : tab === null ? (
           // ---- Layer 2: hub menu — health summary, then hand-drawn icon tiles ----
           <>
-          <HealthSummary records={records} products={products} medLogs={medLogs} />
+          <TreatmentTracker compact events={treatmentEvents} records={records} role={role}/>
+          <HealthSummary records={records} products={products} medLogs={medLogs}/>
           {role === "owner" && (
             <Card style={{ marginBottom: 14 }}>
               <TodayMedicationList date={currentDay} medPresets={medPresets} medLogs={medLogs} role={role} onToggle={(preset,index)=>toggleMedPreset(currentDay,preset,index)}/>
 
             </Card>
           )}
-          <TreatmentTracker compact events={treatmentEvents} records={records} role={role}/>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {tabs.map(([key]) => {
               const meta = TAB_META[key];
