@@ -851,27 +851,74 @@ function stoolDescription(stools){
   if(normal>=hard&&normal>=soft)return '大便大多是正常形態，但偶爾偏硬或偏軟';
   return '大便有時偏硬、有時偏軟，形態不太固定';
 }
+function vomitingWords(metrics, prefix='這段時間') {
+  if (!metrics.vomitRecorded) return `${prefix}沒有填寫嘔吐紀錄`;
+  return metrics.vomitDays ? `${prefix}有記錄到嘔吐` : `${prefix}沒有嘔吐`;
+}
 function compareRegimen(before,after){
   if(!after.days)return '這組用藥剛開始，還沒有健康日記可以整理。';
   const parts=[];
   if(after.avg!==null){
-    if(before&&before.avg!==null){const diff=after.avg-before.avg;parts.push(Math.abs(diff)<3?'這段時間辛巴吃的量和上一組差不多':`這段時間辛巴平均每天吃的量比上一組${diff>0?'多':'少'}一些`);}
-    else parts.push('這段時間已有進食紀錄，但還沒有前一組可以比較');
+    if(before&&before.avg!==null){const diff=after.avg-before.avg;parts.push(Math.abs(diff)<3?'食量和上一組差不多':`食量比上一組${diff>0?'多':'少'}一些`);}
+    else parts.push('已經有食量紀錄');
   }
   if(after.stools.length){
-    const now=stoolDescription(after.stools);
-    if(before&&before.stools.length)parts.push(`上一組用藥期間${stoolDescription(before.stools)}，這一組則${now}`);
-    else parts.push(`這段時間${now}`);
+    if(before&&before.stools.length)parts.push(`上一組${stoolDescription(before.stools)}，目前${stoolDescription(after.stools)}`);
+    else parts.push(`目前${stoolDescription(after.stools)}`);
   }
-  if(after.vomitRecorded){
-    if(before&&before.vomitRecorded){
-      const rate1=before.vomitDays/before.vomitRecorded,rate2=after.vomitDays/after.vomitRecorded;
-      parts.push(Math.abs(rate2-rate1)<0.08?'嘔吐的記錄情況和上一組接近':rate2>rate1?'有記錄到嘔吐的日子比上一組頻繁':'有記錄到嘔吐的日子比上一組少');
-    } else parts.push(after.vomitDays?'這段時間有嘔吐紀錄':'已填寫的日記中沒有記錄到嘔吐');
-  }
-  return (parts.length?parts.map(p=>p.replace(/^[這]段時間/, '這段時間')).join('。')+'。':'這段期間還沒有足夠的日記可以整理。');
+  if(before&&before.vomitRecorded&&after.vomitRecorded){
+    if(!before.vomitDays&&!after.vomitDays)parts.push('兩組都沒有嘔吐');
+    else if(before.vomitDays&&!after.vomitDays)parts.push('上一組有嘔吐，這組沒有');
+    else if(!before.vomitDays&&after.vomitDays)parts.push('上一組沒有嘔吐，這組有');
+    else parts.push('兩組都有嘔吐紀錄');
+  } else parts.push(vomitingWords(after));
+  return parts.join('。')+'。';
 }
-function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false}) {
+function overallRegimenComparison(phases, records, currentIndex){
+  if(phases.length<2)return '目前只有一組用藥，還不能和其他組合比較。';
+  const entries=phases.map((p,i)=>({i,date:p.date,metric:phaseMetrics(phaseRecords(records,p.date,p.end))})).filter(x=>x.metric.days);
+  const now=entries.find(x=>x.i===currentIndex);
+  if(!now)return '目前這組還沒有日記，暫時無法和其他組合比較。';
+  const others=entries.filter(x=>x.i!==currentIndex);
+  if(!others.length)return '其他用藥組合還沒有日記可以比較。';
+  const food=others.filter(x=>x.metric.avg!==null);
+  const parts=[];
+  if(now.metric.avg!==null&&food.length){const avg=food.reduce((n,x)=>n+x.metric.avg,0)/food.length;parts.push(Math.abs(now.metric.avg-avg)<3?'目前食量和其他組合大致接近':`目前食量比其他組合平均${now.metric.avg>avg?'多':'少'}一些`);}
+  const hard=others.filter(x=>x.metric.stools.length&&x.metric.stools.filter(v=>v<=2).length/x.metric.stools.length>0.5);
+  if(now.metric.stools.length)parts.push(`目前${stoolDescription(now.metric.stools)}${hard.length?'；部分歷史組合曾經常偏硬':''}`);
+  parts.push(vomitingWords(now.metric));
+  return parts.join('。')+'。';
+}
+// Local, privacy-preserving multi-factor review. No external AI service or secret key.
+function concurrentFactors(events, medLogs, records, start, end, products) {
+  const stop=end||'9999-12-31';
+  const within=d=>d&&d>=start&&d<stop;
+  const changes=(events||[]).filter(e=>within(e.date));
+  const active=buildRegimenPhases(events).filter(p=>p.date<=start).slice(-1)[0]?.meds||[];
+  const names=[...new Set(active.map(m=>m.name))];
+  const used=[...new Set((medLogs||[]).filter(l=>within(l.date)).map(l=>l.name).filter(Boolean))];
+  const feed=[...new Set((records||[]).filter(r=>within(r.date)&&r.productId).map(r=>products?.find(p=>p.id===r.productId)?.name||'未命名飼料'))];
+  const changesText=changes.map(e=>`${e.name}${e.kind?.includes('停藥')?'停用':e.kind?.includes('開始')?'開始使用':'調整'}`);
+  return {names:[...new Set([...names,...used])],feed,changesText};
+}
+function factorNote(factors, scope) {
+  const pieces=[];
+  if(factors.changesText.length)pieces.push(`同期還有${factors.changesText.slice(0,2).join('、')}${factors.changesText.length>2?'等變更':''}`);
+  if(scope==='feed'&&factors.names.length)pieces.push(`這段時間也有使用${factors.names.slice(0,3).join('、')}${factors.names.length>3?'等藥物或保健品':''}`);
+  if(scope==='med'&&factors.feed.length>1)pieces.push('期間吃過不只一款飼料');
+  if(!pieces.length)return '目前沒有記到其他同期調整；飲水、未登錄的藥物或保健品仍可能影響結果。';
+  return `${pieces.join('；')}，所以不能只把變化算在${scope==='feed'?'飼料':'某一種藥'}身上。`;
+}
+function shortObservation(main, note, limit=160){
+  const a=String(main||'').replace(/。+/g,'。').trim();
+  const b=String(note||'').trim();
+  const combined=a+(a&&!a.endsWith('。')?'。':'')+b;
+  if(combined.length<=limit)return combined;
+  const room=Math.max(0,limit-b.length-1);
+  const head=a.slice(0,room).replace(/[，、；。\s]+$/,'');
+  return head+(head?'。':'')+b.slice(0,Math.max(0,limit-head.length-1));
+}
+function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false,medLogs=[],products=[]}) {
   const [open,setOpen]=useState(false),[editing,setEditing]=useState(null),[selected,setSelected]=useState(null),[details,setDetails]=useState(false);
   const [name,setName]=useState(''),[kind,setKind]=useState('調整劑量／頻率'),[date,setDate]=useState(todayStr());
   const [before,setBefore]=useState(''),[after,setAfter]=useState(''),[note,setNote]=useState(''),[active,setActive]=useState(true);
@@ -884,7 +931,9 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
   const phase=phases[currentIndex],prior=phases[currentIndex-1];
   const currentRecords=phaseRecords(records,phase?.date||'9999-12-31',phase?.end);
   const previousRecords=prior?phaseRecords(records,prior.date,prior.end):phase?([...records].filter(r=>r.date&&r.date<phase.date).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,Math.max(7,currentRecords.length))):[];
-  const summary=phase?compareRegimen(phaseMetrics(previousRecords),phaseMetrics(currentRecords)):'';
+  const factors=phase?concurrentFactors(events,medLogs,records,phase.date,phase.end,products):null;
+  const summary=phase?shortObservation(compareRegimen(phaseMetrics(previousRecords),phaseMetrics(currentRecords)),factorNote(factors,'med')):'';
+  const allSummary=phase?shortObservation(overallRegimenComparison(phases,records,currentIndex),factorNote(factors,'med')):'';
   const recent=phaseMetrics(currentRecords.slice(-3));
   const recentText=recent.days?`最近幾天，${recent.avg!==null?'有持續記錄食量，':''}${stoolDescription(recent.stools)}${recent.vomitRecorded?`，${recent.vomitDays?'也有嘔吐紀錄':'已填寫的日記沒有記錄到嘔吐'}`:'，嘔吐情況尚未完整填寫'}。`:'目前這一組還沒有最近的健康紀錄。';
   const medList=phase?.meds||[];
@@ -897,6 +946,7 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
       {phase?<>
         <div style={{marginTop:12,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>{compact?'這段時間的狀況':'和上一組有什麼不同？'}</strong><div style={{marginTop:4}}>{summary}</div></div>
         {!compact&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>最近幾天</strong><div>{recentText}</div></div>}
+        {!compact&&phases.length>1&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85}}><strong>和所有歷史組合比較</strong><div style={{marginTop:4}}>{allSummary}</div></div>}
         {compact?<button onClick={()=>{const btn=document.querySelector('[data-treatment-open]');if(btn)btn.click();}} style={{border:`1px solid ${COLORS.line}`,background:COLORS.card,color:COLORS.accent,borderRadius:9,padding:'10px 12px',fontSize:13,fontWeight:700,marginTop:12,width:'100%',cursor:'pointer'}}>查看前後組合差異 ›</button>:<>
           <div style={{display:'flex',gap:7,marginTop:12,flexWrap:'wrap'}}>{phases.map((p,i)=><button key={p.date} onClick={()=>{setSelected(i);setDetails(false)}} style={{border:`1px solid ${i===currentIndex?COLORS.accent:COLORS.line}`,borderRadius:9,background:i===currentIndex?COLORS.accentSoft:COLORS.card,color:COLORS.ink,padding:'7px 9px',fontSize:12,cursor:'pointer'}}>{p.date}</button>)}</div>
           <button onClick={()=>setDetails(v=>!v)} style={{border:'none',background:'transparent',color:COLORS.accent,fontSize:13,fontWeight:700,padding:'12px 0 4px',cursor:'pointer'}}>{details?'收起組合明細':'查看上一組與這一組的藥物差異'} ▾</button>
@@ -3098,46 +3148,52 @@ function ExportPanel({ records, products, petName }) {
 
 
 // ---------- Conversational feed observation; no scores or causal claims ----------
-function HealthSummary({ records, products, medLogs = [] }) {
-  const [selected, setSelected] = useState("");
-  const ordered = (records || []).filter(r => r.date && r.productId).slice().sort((a,b) => a.date.localeCompare(b.date));
-  if (!ordered.length) return null;
-  const ids = [...new Set(ordered.map(r => r.productId))];
-  const options = ids.map(id => ({id, name: products.find(p => p.id === id)?.name || "未命名飼料"}));
-  const chosen = ids.includes(selected) ? selected : ordered[ordered.length - 1].productId;
-  const trial = ordered.filter(r => r.productId === chosen);
-  const productName = options.find(p => p.id === chosen)?.name || "這款飼料";
-  const last = trial.slice(-14);
-  const previous = trial.slice(-28, -14);
-  const recent = phaseMetrics(last);
-  const earlier = phaseMetrics(previous);
-  const sentences = [];
-  if (recent.avg !== null) {
-    if (previous.length && earlier.avg !== null) {
-      const diff = recent.avg - earlier.avg;
-      sentences.push(Math.abs(diff) < 3 ? "最近吃的量和前一段時間差不多" : `最近吃的量比前一段時間${diff > 0 ? "多" : "少"}一些`);
-    } else sentences.push("這段時間有記下每天吃的量，還沒有更早的同款飼料紀錄可以比較");
+function HealthSummary({ records, products, medLogs = [], treatmentEvents = [] }) {
+  const [selected,setSelected]=useState('');
+  const ordered=(records||[]).filter(r=>r.date&&r.productId).slice().sort((a,b)=>a.date.localeCompare(b.date));
+  if(!ordered.length)return null;
+  const ids=[...new Set(ordered.map(r=>r.productId))];
+  const options=ids.map(id=>({id,name:products.find(p=>p.id===id)?.name||'未命名飼料'}));
+  const chosen=ids.includes(selected)?selected:ordered[ordered.length-1].productId;
+  const trial=ordered.filter(r=>r.productId===chosen);
+  const otherGroups=options.filter(o=>o.id!==chosen).map(o=>({name:o.name,records:ordered.filter(r=>r.productId===o.id)}));
+  const productName=options.find(p=>p.id===chosen)?.name||'這款飼料';
+  const now=phaseMetrics(trial);
+  const otherMetrics=otherGroups.map(g=>({...g,metric:phaseMetrics(g.records)}));
+  const parts=[];
+  if(otherMetrics.length){
+    const withFood=otherMetrics.filter(g=>g.metric.avg!==null);
+    if(now.avg!==null&&withFood.length){
+      const otherAvg=withFood.reduce((a,g)=>a+g.metric.avg,0)/withFood.length;
+      parts.push(Math.abs(now.avg-otherAvg)<3?`吃${productName}時，食量和其他飼料大致接近`:`吃${productName}時，平均食量比其他飼料${now.avg>otherAvg?'多':'少'}一些`);
+    }
+    if(now.stools.length){
+      const otherStools=otherMetrics.flatMap(g=>g.metric.stools);
+      parts.push(otherStools.length?`這款${stoolDescription(now.stools)}；其他飼料期間${stoolDescription(otherStools)}`:`這款${stoolDescription(now.stools)}`);
+    }
+  } else {
+    parts.push(`目前只有${productName}的紀錄，還沒有其他飼料能比較`);
+    if(now.stools.length)parts.push(stoolDescription(now.stools));
   }
-  if (recent.stools.length) {
-    const now = stoolDescription(recent.stools);
-    sentences.push(previous.length && earlier.stools.length ? `之前${stoolDescription(earlier.stools)}，最近則${now}` : `最近${now}`);
-  } else sentences.push("最近沒有填寫大便形態，暫時看不出排便的變化");
-  if (recent.vomitRecorded) {
-    if (earlier.vomitRecorded) {
-      const oldRate = earlier.vomitDays / earlier.vomitRecorded;
-      const newRate = recent.vomitDays / recent.vomitRecorded;
-      sentences.push(Math.abs(oldRate-newRate)<0.08 ? "有記錄到嘔吐的情況和前一段接近" : `有記錄到嘔吐的日子比前一段${newRate>oldRate?'多':'少'}`);
-    } else sentences.push(recent.vomitDays ? "最近有記錄到嘔吐" : "最近已填寫的日記沒有記錄到嘔吐");
-  } else sentences.push("最近沒有填寫嘔吐情況，不能當作沒有吐");
-  return (
-    <Card style={{marginBottom:14}}>
-      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}><JournalIcon size={18} color={COLORS.accent}/><div style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>飼料分析</div></div>
-      <div style={{fontSize:12,color:COLORS.inkSoft,marginBottom:12}}>看看吃這款飼料時，辛巴的身體狀況</div>
-      <select value={chosen} onChange={e=>setSelected(e.target.value)} style={{...inputStyle,width:'100%',marginBottom:12}}>{options.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
-      <div style={{fontSize:13,lineHeight:1.9,color:COLORS.ink}}><strong>{productName} · 最近的觀察</strong><div style={{marginTop:6}}>{sentences.join('，')}。</div></div>
-      <div style={{fontSize:12,lineHeight:1.7,color:COLORS.inkSoft,marginTop:10}}>這裡整理的是吃這款飼料期間的紀錄。若同時有調藥、改變飲水或混餵其他食物，也可能一起影響狀況，不能只憑這些變化判斷飼料的效果。</div>
-    </Card>
-  );
+  parts.push(vomitingWords(now,`吃${productName}期間`));
+  const start=trial[0]?.date||'9999-12-31';
+  const end=trial[trial.length-1]?.date||start;
+  const medNames=[...new Set((medLogs||[]).filter(l=>l.date>=start&&l.date<=end&&l.name).map(l=>l.name))];
+  const overlapping=(treatmentEvents||[]).filter(e=>e.date<=end&&e.name);
+  const latest=new Map();
+  overlapping.sort((a,b)=>a.date.localeCompare(b.date)).forEach(e=>{const key=e.name.trim().toLowerCase();if(String(e.kind||'').includes('停藥')||String(e.after||'').trim()==='停用')latest.delete(key);else latest.set(key,e.name);});
+  const factors=[...new Set([...medNames,...latest.values()])];
+  const changes=(treatmentEvents||[]).filter(e=>e.date>=start&&e.date<=end);
+  const note=changes.length?`同期還有${changes.slice(0,2).map(e=>e.name+'調整').join('、')}，不能只歸因於飼料。`:factors.length?`同期也使用${factors.slice(0,3).join('、')}，不能單看飼料判斷原因。`:'其他藥物與飲水變化若未登錄，無法排除影響。';
+  const feedText=shortObservation(parts.join('。')+'。',note);
+  return <Card style={{marginBottom:14}}>
+    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}><JournalIcon size={18} color={COLORS.accent}/><div style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>飼料分析</div></div>
+    <div style={{fontSize:12,color:COLORS.inkSoft,marginBottom:12}}>與所有有紀錄的飼料比較，並查看同期用藥</div>
+    <select value={chosen} onChange={e=>setSelected(e.target.value)} style={{...inputStyle,width:'100%',marginBottom:12}}>{options.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+    <div style={{fontSize:13,lineHeight:1.9,color:COLORS.ink}}><strong>{productName} · 與其他飼料比較</strong><div style={{marginTop:6}}>{feedText}</div></div>
+    {otherGroups.length>0&&<details style={{marginTop:10,fontSize:12,color:COLORS.inkSoft}}><summary style={{cursor:'pointer'}}>查看比較的飼料與紀錄天數</summary><div style={{marginTop:6}}>{options.map(o=><div key={o.id}>{o.name}：{ordered.filter(r=>r.productId===o.id).length} 筆日記</div>)}</div></details>}
+    <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:8}}>不同飼料的使用天數與同期用藥可能不同；這是紀錄比較，不是飼料效果判定。</div>
+  </Card>;
 }
 
 // ---------- Landing screen ----------
@@ -3850,8 +3906,8 @@ function App() {
         ) : tab === null ? (
           // ---- Layer 2: hub menu — health summary, then hand-drawn icon tiles ----
           <>
-          <TreatmentTracker compact events={treatmentEvents} records={records} role={role}/>
-          <HealthSummary records={records} products={products} medLogs={medLogs}/>
+          <TreatmentTracker compact events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products}/>
+          <HealthSummary records={records} products={products} medLogs={medLogs} treatmentEvents={treatmentEvents}/>
           {role === "owner" && (
             <Card style={{ marginBottom: 14 }}>
               <TodayMedicationList date={currentDay} medPresets={medPresets} medLogs={medLogs} role={role} onToggle={(preset,index)=>toggleMedPreset(currentDay,preset,index)}/>
@@ -3912,7 +3968,7 @@ function App() {
                 onManageMedPresets={role === "owner" ? () => setMedPresetsOpen(true) : undefined}
               />
             )}
-            {tab === "treatment" && <TreatmentTracker events={treatmentEvents} records={records} role={role}
+            {tab === "treatment" && <TreatmentTracker events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products}
               onAdd={e=>persistTreatmentEvents([...treatmentEvents,e])}
               onUpdate={e=>persistTreatmentEvents(treatmentEvents.map(x=>x.id===e.id?e:x))}
               onDelete={id=>setConfirmDialog({message:"確定刪除這筆治療變更嗎？不會影響原本用藥及飲食日記。",onYes:()=>persistTreatmentEvents(treatmentEvents.filter(x=>x.id!==id))})}
