@@ -643,17 +643,33 @@ function medDue(p, date) {
 }
 function medCount(p) { return Math.max(1, Math.min(12, Number(p.timesPerDay) || 1)); }
 function medDoseIndex(log) { return Math.max(1, Number(log.doseIndex) || 1); }
-function TodayMedicationList({date, medPresets, medLogs, role, onToggle}) {
-  const items = medPresets.filter(p => medDue(p, date));
+function TodayMedicationList({date: today, medPresets, medLogs, role, onToggle, onManual, onRemove, onOpenDiary}) {
+  const [chosen,setChosen]=useState("");
+  const date=chosen && chosen<=today ? chosen : today;
+  const past=date!==today;
+  const shift=n=>{const d=new Date(date+"T12:00:00");d.setDate(d.getDate()+n);const next=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;if(next<=today)setChosen(next===today?"":next);};
+  const dayLogs=medLogs.filter(l=>l.date===date);
+  const items=medPresets.filter(p=>medDue(p,date)).map(p=>{const logs=dayLogs.filter(l=>l.presetId===p.id);return past&&logs.length?{...p,dose:logs[0].dose,name:logs[0].name,timesPerDay:Math.max(medCount(p),...logs.map(medDoseIndex))}:p;});
+  const extra=dayLogs.filter(l=>!items.some(p=>p.id===l.presetId));
+  const [manual,setManual]=useState(false);
+  const [name,setName]=useState("");const [dose,setDose]=useState("");
+  const navStyle={border:`1px solid ${COLORS.line}`,background:"white",borderRadius:9,padding:8,color:COLORS.ink};
   const total = items.reduce((sum,p) => sum + medCount(p), 0);
   const givenFor = p => medLogs.filter(l => l.date === date && l.presetId === p.id && medDoseIndex(l) <= medCount(p));
   const completed = items.reduce((sum,p) => sum + new Set(givenFor(p).map(medDoseIndex)).size, 0);
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8}}>
-      <span style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>今日用藥</span>
+      <span style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>用藥紀錄</span>
       <span style={{fontSize:12,color:COLORS.inkSoft}}>已完成 {completed} / {total}</span>
     </div>
-    {items.length===0 ? <div style={{fontSize:13,color:COLORS.inkSoft,padding:"12px 0"}}>今天沒有排定的藥物</div> : items.map((p,i)=>{
+    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+      <button type="button" style={navStyle} onClick={()=>shift(-1)} aria-label="前一天"><ChevronLeft size={18}/></button>
+      <input aria-label="用藥日期" type="date" max={today} value={date} onChange={e=>{if(e.target.value&&e.target.value<=today)setChosen(e.target.value);}} style={{...inputStyle,flex:1,minWidth:0}}/>
+      <button type="button" style={navStyle} disabled={!past} onClick={()=>shift(1)} aria-label="後一天"><ChevronRight size={18}/></button>
+    </div>
+    {past&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><span style={{fontSize:12,color:COLORS.inkSoft}}>補登 {date}</span><button style={navStyle} onClick={()=>setChosen("")}>返回今天</button></div>}
+    {past&&<div style={{fontSize:12,color:COLORS.inkSoft,marginBottom:8}}>歷史排程若曾被覆寫，可能不完整。補登前請確認當天藥名、劑量及次數；也可手動補登。</div>}
+    {items.length===0 ? <div style={{fontSize:13,color:COLORS.inkSoft,padding:"12px 0"}}>這天沒有排定的藥物</div> : items.map((p,i)=>{
       const count=medCount(p);
       const givenIndices=new Set(givenFor(p).map(medDoseIndex));
       const done=givenIndices.size;
@@ -668,11 +684,14 @@ function TodayMedicationList({date, medPresets, medLogs, role, onToggle}) {
           {Array.from({length:count},(_,index)=>{
             const doseIndex=index+1;
             const given=givenIndices.has(doseIndex);
-            return <button key={doseIndex} type="button" disabled={role!=="owner"} aria-label={`${p.name} 第${doseIndex}次${given?"，已完成":"，未完成"}`} title={`第${doseIndex}次`} onClick={()=>onToggle(p,doseIndex)} style={{width:count===1?32:30,height:count===1?32:30,borderRadius:"50%",border:`2px solid ${given?COLORS.accent:COLORS.line}`,background:given?COLORS.accent:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:role==="owner"?"pointer":"default",color:given?"#fff":COLORS.inkSoft,fontSize:12,fontWeight:700}}>{given?<Check size={16} color="#fff" strokeWidth={3}/>:doseIndex}</button>;
+            return <button key={doseIndex} type="button" disabled={role!=="owner"} aria-label={`${p.name} 第${doseIndex}次${given?"，已完成":"，未完成"}`} title={`第${doseIndex}次`} onClick={()=>onToggle(date,p,doseIndex)} style={{width:count===1?32:30,height:count===1?32:30,borderRadius:"50%",border:`2px solid ${given?COLORS.accent:COLORS.line}`,background:given?COLORS.accent:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:role==="owner"?"pointer":"default",color:given?"#fff":COLORS.inkSoft,fontSize:12,fontWeight:700}}>{given?<Check size={16} color="#fff" strokeWidth={3}/>:doseIndex}</button>;
           })}
         </span>
       </div>;
     })}
+    {extra.map(l=><div key={l.id} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 0",borderTop:`1px solid ${COLORS.line}`}}><span style={{flex:1,fontSize:13}}>{l.name} {l.dose} · 已記錄{l.presetId?` 第${medDoseIndex(l)}次`:""}</span>{role==="owner"&&<button style={navStyle} onClick={()=>onRemove(l.id)}>移除</button>}</div>)}
+    {role==="owner"&&past&&<div style={{marginTop:10}}><button style={navStyle} onClick={()=>setManual(v=>!v)}>{manual?"取消":"手動補登藥物"}</button>{manual&&<div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}><input style={inputStyle} placeholder="當天藥名" value={name} onChange={e=>setName(e.target.value)}/><input style={inputStyle} placeholder="當天劑量" value={dose} onChange={e=>setDose(e.target.value)}/><button style={navStyle} disabled={!name.trim()} onClick={()=>{onManual(date,{name:name.trim(),dose:dose.trim(),note:"",saveAsPreset:false});setName("");setDose("");setManual(false);}}>補登一次</button></div>}</div>}
+    {onOpenDiary&&<button style={{...navStyle,marginTop:10}} onClick={()=>onOpenDiary(date)}>查看當天飲食日記</button>}
   </div>;
 }
 function MedSection({ date, medPresets, medLogs, role, onTogglePreset, onAddManual, onRemoveLog, onManagePresets, hideHeader = false }) {
@@ -918,7 +937,13 @@ function shortObservation(main, note, limit=160){
   const head=a.slice(0,room).replace(/[，、；。\s]+$/,'');
   return head+(head?'。':'')+b.slice(0,Math.max(0,limit-head.length-1));
 }
-function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false,medLogs=[],products=[]}) {
+function DiaryDateLinks({records,onOpen,label="查看這段期間的飲食日記"}) {
+  const dates=[...new Set((records||[]).map(r=>r.date).filter(Boolean))].sort().reverse();
+  return <details style={{marginTop:10,fontSize:12,color:COLORS.inkSoft}}><summary style={{cursor:'pointer',color:COLORS.accent,fontWeight:700}}>{label}（{dates.length} 天）</summary>
+    {dates.length?<div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:8}}>{dates.map(d=><button key={d} type="button" onClick={()=>onOpen(d)} style={{border:`1px solid ${COLORS.line}`,background:COLORS.card,color:COLORS.accent,borderRadius:8,padding:'9px 10px',cursor:'pointer',textDecoration:'underline'}}>{d} ›</button>)}</div>:<div style={{marginTop:8}}>這段期間沒有飲食日記。</div>}
+  </details>;
+}
+function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false,medLogs=[],products=[],onOpenDiary}) {
   const [open,setOpen]=useState(false),[editing,setEditing]=useState(null),[selected,setSelected]=useState(null),[details,setDetails]=useState(false);
   const [name,setName]=useState(''),[kind,setKind]=useState('調整劑量／頻率'),[date,setDate]=useState(todayStr());
   const [before,setBefore]=useState(''),[after,setAfter]=useState(''),[note,setNote]=useState(''),[active,setActive]=useState(true);
@@ -947,6 +972,8 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
         <div style={{marginTop:12,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>{compact?'這段時間的狀況':'和上一組有什麼不同？'}</strong><div style={{marginTop:4}}>{summary}</div></div>
         {!compact&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>最近幾天</strong><div>{recentText}</div></div>}
         {!compact&&phases.length>1&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85}}><strong>和所有歷史組合比較</strong><div style={{marginTop:4}}>{allSummary}</div></div>}
+        <DiaryDateLinks records={currentRecords} onOpen={onOpenDiary}/>
+        {!compact&&<DiaryDateLinks records={previousRecords} onOpen={onOpenDiary} label="查看上一組的飲食日記"/>}
         {compact?<button onClick={()=>{const btn=document.querySelector('[data-treatment-open]');if(btn)btn.click();}} style={{border:`1px solid ${COLORS.line}`,background:COLORS.card,color:COLORS.accent,borderRadius:9,padding:'10px 12px',fontSize:13,fontWeight:700,marginTop:12,width:'100%',cursor:'pointer'}}>查看前後組合差異 ›</button>:<>
           <div style={{display:'flex',gap:7,marginTop:12,flexWrap:'wrap'}}>{phases.map((p,i)=><button key={p.date} onClick={()=>{setSelected(i);setDetails(false)}} style={{border:`1px solid ${i===currentIndex?COLORS.accent:COLORS.line}`,borderRadius:9,background:i===currentIndex?COLORS.accentSoft:COLORS.card,color:COLORS.ink,padding:'7px 9px',fontSize:12,cursor:'pointer'}}>{p.date}</button>)}</div>
           <button onClick={()=>setDetails(v=>!v)} style={{border:'none',background:'transparent',color:COLORS.accent,fontSize:13,fontWeight:700,padding:'12px 0 4px',cursor:'pointer'}}>{details?'收起組合明細':'查看上一組與這一組的藥物差異'} ▾</button>
@@ -3148,7 +3175,7 @@ function ExportPanel({ records, products, petName }) {
 
 
 // ---------- Conversational feed observation; no scores or causal claims ----------
-function HealthSummary({ records, products, medLogs = [], treatmentEvents = [] }) {
+function HealthSummary({ records, products, medLogs = [], treatmentEvents = [], onOpenDiary }) {
   const [selected,setSelected]=useState('');
   const ordered=(records||[]).filter(r=>r.date&&r.productId).slice().sort((a,b)=>a.date.localeCompare(b.date));
   if(!ordered.length)return null;
@@ -3191,6 +3218,7 @@ function HealthSummary({ records, products, medLogs = [], treatmentEvents = [] }
     <div style={{fontSize:12,color:COLORS.inkSoft,marginBottom:12}}>與所有有紀錄的飼料比較，並查看同期用藥</div>
     <select value={chosen} onChange={e=>setSelected(e.target.value)} style={{...inputStyle,width:'100%',marginBottom:12}}>{options.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
     <div style={{fontSize:13,lineHeight:1.9,color:COLORS.ink}}><strong>{productName} · 與其他飼料比較</strong><div style={{marginTop:6}}>{feedText}</div></div>
+    <DiaryDateLinks records={trial} onOpen={onOpenDiary} label="查看這款飼料的飲食日記"/>
     {otherGroups.length>0&&<details style={{marginTop:10,fontSize:12,color:COLORS.inkSoft}}><summary style={{cursor:'pointer'}}>查看比較的飼料與紀錄天數</summary><div style={{marginTop:6}}>{options.map(o=><div key={o.id}>{o.name}：{ordered.filter(r=>r.productId===o.id).length} 筆日記</div>)}</div></details>}
     <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:8}}>不同飼料的使用天數與同期用藥可能不同；這是紀錄比較，不是飼料效果判定。</div>
   </Card>;
@@ -3706,9 +3734,9 @@ function App() {
   };
   const tabs = role === "owner"
     ? [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["meds", "用藥清單"], ["treatment", "治療變更"]]
-    : [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["meds", "用藥清單"], ["treatment", "治療變更"]];
+    : [["dashboard", "趨勢總覽"], ["history", "飲食日記"], ["export", "匯出"], ["treatment", "治療變更"]];
 
-  useEffect(() => { if (role === "vet" && tab && !["dashboard", "history", "export", "meds", "treatment"].includes(tab)) setTab(null); }, [role]); // eslint-disable-line
+  useEffect(() => { if (role === "vet" && tab && !["dashboard", "history", "export", "treatment"].includes(tab)) setTab(null); }, [role]); // eslint-disable-line
 
   if (screen === "landing") {
     return (
@@ -3906,11 +3934,11 @@ function App() {
         ) : tab === null ? (
           // ---- Layer 2: hub menu — health summary, then hand-drawn icon tiles ----
           <>
-          <TreatmentTracker compact events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products}/>
-          <HealthSummary records={records} products={products} medLogs={medLogs} treatmentEvents={treatmentEvents}/>
+          <TreatmentTracker compact onOpenDiary={openDayByDate} events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products}/>
+          <HealthSummary onOpenDiary={openDayByDate} records={records} products={products} medLogs={medLogs} treatmentEvents={treatmentEvents}/>
           {role === "owner" && (
             <Card style={{ marginBottom: 14 }}>
-              <TodayMedicationList date={currentDay} medPresets={medPresets} medLogs={medLogs} role={role} onToggle={(preset,index)=>toggleMedPreset(currentDay,preset,index)}/>
+              <TodayMedicationList date={currentDay} medPresets={medPresets} medLogs={medLogs} role={role} onToggle={toggleMedPreset} onManual={addManualMedLog} onRemove={removeMedLog} onOpenDiary={openDayByDate}/>
 
             </Card>
           )}
@@ -3968,7 +3996,7 @@ function App() {
                 onManageMedPresets={role === "owner" ? () => setMedPresetsOpen(true) : undefined}
               />
             )}
-            {tab === "treatment" && <TreatmentTracker events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products}
+            {tab === "treatment" && <TreatmentTracker onOpenDiary={openDayByDate} events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products}
               onAdd={e=>persistTreatmentEvents([...treatmentEvents,e])}
               onUpdate={e=>persistTreatmentEvents(treatmentEvents.map(x=>x.id===e.id?e:x))}
               onDelete={id=>setConfirmDialog({message:"確定刪除這筆治療變更嗎？不會影響原本用藥及飲食日記。",onYes:()=>persistTreatmentEvents(treatmentEvents.filter(x=>x.id!==id))})}
