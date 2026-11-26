@@ -20,7 +20,7 @@
 <!-- Firebase (compat build works without a bundler) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<style>@keyframes regimenSlide{from{opacity:.5;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}@media(prefers-reduced-motion:reduce){*{animation-duration:0s!important}}</style></head>
+<style>@keyframes regimenSlide{from{opacity:.5;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}@media(prefers-reduced-motion:reduce){*{animation-duration:0s!important}}</style><style>.expanded-landscape{position:fixed;inset:0;display:flex;flex-direction:column;overflow:hidden}.expanded-landscape-header{padding:10px 16px!important}.expanded-landscape-body{min-height:0}.expanded-landscape .expanded-plot{touch-action:none!important}@media (orientation:portrait){.expanded-landscape{inset:auto;top:50%;left:50%;width:100dvh;height:100dvw;transform:translate(-50%,-50%) rotate(90deg);}.expanded-landscape-header{padding-left: max(16px,env(safe-area-inset-top))!important;}}</style></head>
 <body>
 <div id="root"><div id="boot">載入中…</div></div>
 
@@ -858,7 +858,9 @@ function assumedDiaryRecords(records, products, petName, end) {
   for(let date='2026-08-16';date<=end;date=shiftISO(date,1)) {
     if(existing.has(date)) continue;
     const active=products.filter(p=>p.startDate&&p.startDate<=date&&(!p.endDate||p.endDate>=date)).sort((a,b)=>b.startDate.localeCompare(a.startDate));
-    result.push({id:'assumed-'+date,date,productId:active[0]?.id||'',breakfast:0,dinner:0,bedtime:0,mental:4,stool:4,vomit:0,other:'',stress:'',photos:[],assumedDiary:true});
+    const prior=records.filter(r=>r.date<date&&products.some(p=>p.id===r.productId)).sort((a,b)=>b.date.localeCompare(a.date))[0];
+    const inferred=prior && (!active[0] || active[0].startDate<=prior.date) ? prior.productId : (active[0]?.id||'');
+    result.push({id:'assumed-'+date,date,productId:inferred,breakfast:0,dinner:0,bedtime:0,mental:4,stool:4,vomit:0,other:'',stress:'',photos:[],assumedDiary:true});
   }
   return result.sort((a,b)=>a.date.localeCompare(b.date));
 }
@@ -2041,7 +2043,19 @@ function paddedDomain(slice) {
 
 // One chart component that renders every metric view (avoids duplicating chart markup per metric)
 
-function MetricChart({ data, bands, domain, height, onPointClick, products, kind }) {
+function dailyFeedBands(data, products) {
+  const result=[];
+  for (const r of [...data].sort((a,b)=>a.ts-b.ts)) {
+    const p=products.find(p=>p.id===r.productId);
+    if(!p) continue;
+    const c=swatch(p.color), last=result[result.length-1], x1=r.ts-43200000, x2=r.ts+43200000;
+    if(last && last.productId===p.id && last.x2===x1) last.x2=x2;
+    else result.push({x1,x2,fill:c.bg,labelColor:c.border,key:p.id+'-'+r.date,productId:p.id,label:p.name});
+  }
+  return result;
+}
+
+function MetricChart({ data, bands, domain, height, onPointClick, products, kind, preview=false }) {
   const dotClick = (payload) => { if (payload && payload.date) onPointClick(payload.date); };
   // Small filled dots keep the trend readable; the transparent halo remains a generous tap target.
   const makeDot = (color, r = 3) => (props) => {
@@ -2078,7 +2092,8 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
   // gets its label at the visible left edge. Labels sit at the bottom, which is the emptiest area.
   // ReferenceArea must name the y-axis in dual-axis charts, otherwise it silently doesn't render.
   // Separate feed strip, outside the plotting area. Clip long names to their own segment.
-  const feedStrip = <div style={{display:"flex",position:"relative",height:22,margin:"0 8px 0 38px",overflow:"hidden"}}>{bands.map(b=>{
+  const visibleBands = dailyFeedBands(data, products);
+  const feedStrip = <div style={{position:"relative",height:22,margin:`0 ${kind === "health" ? 32 : 8}px 0 ${kind === "events" ? 66 : 38}px`,overflow:"hidden"}}>{visibleBands.map(b=>{
     const x1=Math.max(b.x1,domain[0]), x2=Math.min(b.x2,domain[1]);
     if(x2<=x1)return null;
     const span=domain[1]-domain[0];
@@ -2089,7 +2104,7 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
   if (kind === "health") {
     return (
       <><ResponsiveContainer width="100%" height={height}>
-        <ComposedChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 4 }}>
+        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
 
           <CartesianGrid strokeDasharray="2 6" stroke={COLORS.line} strokeOpacity={0.78} vertical={false} />
           <XAxis {...xAxisProps} />
@@ -2105,11 +2120,11 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
   if (kind === "total") {
     return (
       <><ResponsiveContainer width="100%" height={height}>
-        <LineChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 4 }}>
+        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
 
           <CartesianGrid strokeDasharray="2 6" stroke={COLORS.line} strokeOpacity={0.78} vertical={false} />
           <XAxis {...xAxisProps} />
-          <YAxis axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} />
+          <YAxis width={38} domain={[0,"auto"]} axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} />
           <Line dataKey="target" type="stepAfter" stroke="#A7B0BC" strokeWidth={1.25} strokeDasharray="4 6" dot={false} activeDot={false} connectNulls isAnimationActive={false} />
           <Line dataKey="total" stroke={COLORS.accent} strokeWidth={1.5} dot={makeDot(COLORS.accent, 2.5)} activeDot={false} {...lineProps} />
         </LineChart>
@@ -2119,11 +2134,11 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
   if (kind === "mental") {
     return (
       <><ResponsiveContainer width="100%" height={height}>
-        <LineChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 4 }}>
+        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
 
           <CartesianGrid strokeDasharray="2 6" stroke={COLORS.line} strokeOpacity={0.78} vertical={false} />
           <XAxis {...xAxisProps} />
-          <YAxis domain={[0, 5]} ticks={[0, 1, 2, 3, 4, 5]} axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} />
+          <YAxis width={38} domain={[0, 5]} ticks={[0, 1, 2, 3, 4, 5]} axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} />
           <Line dataKey="mental" stroke={COLORS.blue} strokeWidth={1.5} dot={makeDot(COLORS.blue, 2.5)} activeDot={false} {...lineProps} />
         </LineChart>
       </ResponsiveContainer>{feedStrip}</>
@@ -2132,13 +2147,13 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
   if (kind === "stool") {
     return (
       <><ResponsiveContainer width="100%" height={height}>
-        <LineChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 4 }}>
+        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
 
           {/* normal Bristol range (3–4) shaded so both extremes read as "off" at a glance */}
           <ReferenceArea y1={3} y2={4} fill={COLORS.accent} fillOpacity={0.12} ifOverflow="visible" />
           <CartesianGrid strokeDasharray="2 6" stroke={COLORS.line} strokeOpacity={0.78} vertical={false} />
           <XAxis {...xAxisProps} />
-          <YAxis domain={[1, 7]} axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} />
+          <YAxis width={38} domain={[1, 7]} axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} />
           <Line dataKey="stool" stroke={COLORS.gold} strokeWidth={1.5} dot={makeDot(COLORS.gold, 2.5)} activeDot={false} {...lineProps} />
         </LineChart>
       </ResponsiveContainer>{feedStrip}</>
@@ -2175,6 +2190,10 @@ const ZOOM_STEP = 5;
 
 function ExpandedChartView({ chartData, bands, products, role, existingDates, onSaveRecord, onDeleteRecord, metric, initialDate, onOpenInHistory, onQuickAddProduct, onClose, onConfirm, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const meta = CHART_META[metric] || CHART_META.health;
+  const readViewport=()=>({w:window.visualViewport?.width||window.innerWidth,h:window.visualViewport?.height||window.innerHeight});
+  const [viewport,setViewport]=useState(readViewport);
+  useEffect(()=>{const update=()=>setViewport(readViewport());window.addEventListener('resize',update);window.visualViewport?.addEventListener('resize',update);return()=>{window.removeEventListener('resize',update);window.visualViewport?.removeEventListener('resize',update);};},[]);
+  const rotated=viewport.h>viewport.w;
   const total = chartData.length;
   const initialIndex = initialDate ? chartData.findIndex((d) => d.date === initialDate) : -1;
   const defaultViewDays = Math.min(20, total || 20);
@@ -2188,6 +2207,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
   const chartEditDirty = useRef(false);
   const containerRef = useRef(null);
   const dragRef = useRef(null);
+  const expandedPinch=useRef(null);
   const [dragging, setDragging] = useState(false);
 
   const maxStart = Math.max(0, total - viewDays);
@@ -2207,18 +2227,18 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
 
   const DRAG_THRESHOLD = 6;
   const onPointerDown = (e) => {
-    dragRef.current = { startX: e.clientX, startWindowStart: windowStart, moved: false, pointerId: e.pointerId, target: e.currentTarget };
+    dragRef.current = { startX: rotated?e.clientY:e.clientX, startWindowStart: windowStart, moved: false, pointerId: e.pointerId, target: e.currentTarget };
   };
   const onPointerMove = (e) => {
     if (!dragRef.current || !containerRef.current) return;
-    const deltaX = e.clientX - dragRef.current.startX;
+    const deltaX = (rotated?e.clientY:e.clientX) - dragRef.current.startX;
     if (!dragRef.current.moved) {
       if (Math.abs(deltaX) < DRAG_THRESHOLD) return; // small movement — treat as a tap, don't hijack it
       dragRef.current.moved = true;
       setDragging(true);
       try { dragRef.current.target.setPointerCapture(dragRef.current.pointerId); } catch (err) { /* noop */ }
     }
-    const width = containerRef.current.getBoundingClientRect().width || 300;
+    const width = containerRef.current.clientWidth || 300;
     const daysPerPixel = viewDays / width;
     const nextStart = clamp(dragRef.current.startWindowStart - deltaX * daysPerPixel, 0, maxStart);
     setWindowStart(nextStart);
@@ -2231,9 +2251,9 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
 
   const zoomPresets = [7, 20, 30, 60];
 
-  return (
-    <div style={{ position: "fixed", inset: 0, background: COLORS.bg, zIndex: 60, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 40px)", borderBottom: `1px solid ${COLORS.line}`, gap: 8 }}>
+  return ReactDOM.createPortal(
+    <div className="expanded-landscape" style={{ background: COLORS.bg, zIndex: 1000, position:"fixed", inset:"auto", top:0,left:0,width:rotated?viewport.h:viewport.w,height:rotated?viewport.w:viewport.h,transformOrigin:"top left",transform:rotated?`translateX(${viewport.w}px) rotate(90deg)`:"none",display:"flex",flexDirection:"column",overflow:"hidden",fontFamily:"IBM Plex Sans, sans-serif",color:COLORS.ink }}> 
+      <div className="expanded-landscape-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 40px)", borderBottom: `1px solid ${COLORS.line}`, gap: 8 }}>
         <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>
           <X size={20} />關閉
         </button>
@@ -2247,7 +2267,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
         <div style={{ width: 56, flexShrink: 0 }} />
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+      <div className="expanded-landscape-body" style={{ flex: 1, overflowY: "auto", padding: 12 }}>
         {meta.legend && <TrendLegend series={meta.legend} />}
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
@@ -2278,13 +2298,17 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
         <Card style={{ padding: "12px 8px 4px" }}>
           <div
             ref={containerRef}
+            className="expanded-plot"
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={endDrag}
-            onPointerLeave={endDrag}
+            onPointerLeave={endDrag} onPointerCancel={endDrag}
+            onTouchStart={e=>{if(e.touches.length===2){const [a,b]=e.touches;expandedPinch.current={distance:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),days:viewDays};endDrag();}}}
+            onTouchMove={e=>{if(e.touches.length===2&&expandedPinch.current){const [a,b]=e.touches,q=expandedPinch.current;applyZoom(Math.round(q.days*q.distance/Math.max(1,Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY))));}}}
+            onTouchEnd={()=>{expandedPinch.current=null;}} onTouchCancel={()=>{expandedPinch.current=null;}}
             style={{ cursor: dragging ? "grabbing" : "grab", touchAction: "pan-y" }}
           >
-            <MetricChart data={windowed} bands={bands} domain={domain} height={260} onPointClick={handlePointClick} products={products} kind={meta.kind} />
+            <MetricChart data={windowed} bands={bands} domain={domain} height={Math.max(120,Math.min(250,(rotated?viewport.w:viewport.h)-170))} onPointClick={handlePointClick} products={products} kind={meta.kind} />
           </div>
         </Card>
 
@@ -2332,7 +2356,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
           </Card>
         )}
       </div>
-    </div>
+    </div>, document.body
   );
 }
 
@@ -2401,7 +2425,7 @@ function ProductIssueSummary({ records, products }) {
           );
         })}
       </div>
-      {rows.length>1 && <button type="button" aria-expanded={showHistory} onClick={()=>setShowHistory(v=>!v)} style={{...inputStyle,width:"100%",marginTop:10,cursor:"pointer"}}>{showHistory ? "收合歷史飼料" : `查看其他飼料（${rows.length-1}款）`}</button>}
+      {rows.length>1 && <Btn size="sm" variant="secondary" onClick={()=>setShowHistory(v=>!v)} style={{width:"100%",marginTop:10}}><ChevronDown size={14} style={{transform:showHistory?"rotate(180deg)":"none"}}/>{showHistory ? "收合歷史飼料" : `查看其他飼料（${rows.length-1}款）`}</Btn>}
     </Card>
   );
 }
@@ -2437,9 +2461,10 @@ function MultiFactorTrend({records,products,events,onOpen,range,setRange,scale,s
 function Dashboard({ records, products, treatmentEvents=[], role, existingDates, onSaveRecord, onDeleteRecord, onOpenInHistory, onQuickAddProduct, onConfirm, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [expanded, setExpanded] = useState(null); // { metric, date } | null
   const [range,setRange]=useState('30'),[scale,setScale]=useState(22);
+  const [scrollRatio,setScrollRatio]=useState(1);
   const scrolls=useRef({}), syncing=useRef(false), pinchState=useRef(null);
   const registerScroll=(key,el)=>{if(el)scrolls.current[key]=el;else delete scrolls.current[key];};
-  const syncScroll=(key,el)=>{if(syncing.current)return;syncing.current=true;const max=el.scrollWidth-el.clientWidth;const ratio=max>0?el.scrollLeft/max:1;Object.entries(scrolls.current).forEach(([k,v])=>{if(k!==key){const target=ratio*Math.max(0,v.scrollWidth-v.clientWidth);if(Math.abs(v.scrollLeft-target)>2)v.scrollLeft=target;}});requestAnimationFrame(()=>{syncing.current=false;});};
+  const syncScroll=(key,el)=>{if(syncing.current)return;syncing.current=true;const max=el.scrollWidth-el.clientWidth;const ratio=max>0?el.scrollLeft/max:1;setScrollRatio(ratio);Object.entries(scrolls.current).forEach(([k,v])=>{if(k!==key){const target=ratio*Math.max(0,v.scrollWidth-v.clientWidth);if(Math.abs(v.scrollLeft-target)>2)v.scrollLeft=target;}});requestAnimationFrame(()=>{syncing.current=false;});};
   useEffect(()=>{Object.values(scrolls.current).forEach(el=>el.scrollLeft=el.scrollWidth);},[range]);
 
   const chartData = useMemo(() => {
@@ -2479,11 +2504,8 @@ function Dashboard({ records, products, treatmentEvents=[], role, existingDates,
   // A band runs from the START of its first day to the END of its last day, so consecutive
   // products touch at midnight instead of leaving a one-day white gap between them.
   const latestTs = chartData.length ? chartData[chartData.length - 1].ts : toTs(todayStr());
-  const bands = products.map((p) => {
-    const c = swatch(p.color);
-    const end = p.endDate ? toTs(p.endDate) + DAY : Math.max(latestTs, toTs(todayStr())) + DAY;
-    return { x1: toTs(p.startDate), x2: end, fill: c.bg, labelColor: c.border, key: p.id, label: p.name };
-  });
+  const bands = [];
+  for(const r of chartData){const p=products.find(p=>p.id===r.productId);if(!p)continue;const c=swatch(p.color),last=bands[bands.length-1],x1=r.ts-DAY/2,x2=r.ts+DAY/2;if(last&&last.productId===p.id&&last.x2===x1){last.x2=x2;}else bands.push({x1,x2,fill:c.bg,labelColor:c.border,key:p.id+"-"+r.date,productId:p.id,label:p.name});}
 
   const openExpanded = (metric, date) => setExpanded({ metric, date: date || null });
 
@@ -2497,6 +2519,7 @@ function Dashboard({ records, products, treatmentEvents=[], role, existingDates,
 
   const renderChartCard = (metric, data, chartDomain, height = 180) => {
     const meta = CHART_META[metric];
+    const count=Math.min(trendCount,Math.max(7,Math.floor(320/scale)));const first=Math.round((trendCount-count)*scrollRatio);const visibleData=trendData.slice(first,first+count);
     return (
       <Card key={metric}>
         <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: COLORS.ink, display: "flex", alignItems: "center", gap: 6 }}>
@@ -2504,7 +2527,7 @@ function Dashboard({ records, products, treatmentEvents=[], role, existingDates,
           {meta.title}
         </div>
         {meta.legend && <TrendLegend series={meta.legend} />}
-        <div ref={el=>registerScroll(metric,el)} onScroll={e=>syncScroll(metric,e.currentTarget)} style={{overflowX:'auto',touchAction:'pan-x pan-y',WebkitOverflowScrolling:'touch'}} onTouchStart={e=>{if(e.touches.length===2){const [a,b]=e.touches;pinchState.current={distance:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),scale};}}} onTouchMove={e=>{if(e.touches.length===2&&pinchState.current){const [a,b]=e.touches,q=pinchState.current;setScale(Math.max(9,Math.min(85,q.scale*Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/Math.max(1,q.distance))));}}} onTouchEnd={()=>{pinchState.current=null;}} onTouchCancel={()=>{pinchState.current=null;}}><div style={{width:Math.max(320,trendCount*scale+12)}}><MetricChart data={trendData} bands={bands} domain={trendDomain} height={height} products={products} kind={meta.kind} onPointClick={(date)=>{if(byDate.has(date))openExpanded(metric,date);}} /></div></div>
+        <div style={{position:"relative",touchAction:"pan-y"}} onTouchStart={e=>{const t=e.touches;if(t.length===2){pinchState.current={distance:Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY),scale};}else if(t.length===1){pinchState.current={x:t[0].clientX,ratio:scrollRatio};}}} onTouchMove={e=>{const t=e.touches,q=pinchState.current;if(!q)return;if(t.length===2&&q.distance){setScale(Math.max(9,Math.min(85,q.scale*Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY)/q.distance)));}else if(t.length===1&&q.x!=null){const el=scrolls.current[metric];if(el){el.scrollLeft=q.ratio*(el.scrollWidth-el.clientWidth)+q.x-t[0].clientX;}}}} onTouchEnd={()=>{pinchState.current=null;}} onTouchCancel={()=>{pinchState.current=null;}}><MetricChart data={visibleData} bands={bands} domain={paddedDomain(visibleData)} height={height} products={products} kind={meta.kind} onPointClick={(date)=>{if(byDate.has(date))openExpanded(metric,date);}}/><div ref={el=>registerScroll(metric,el)} onScroll={e=>syncScroll(metric,e.currentTarget)} style={{overflowX:"auto",height:18,touchAction:"pan-x",WebkitOverflowScrolling:"touch"}}><div style={{width:Math.max(320,trendCount*scale+12),height:8,background:COLORS.line,borderRadius:4}}/></div></div>
         <Btn size="sm" variant="secondary" onClick={() => openExpanded(metric, null)} style={{ width: "100%", marginTop: 10 }}>
           <Maximize2 size={14} />展開查看（可縮放／拖曳瀏覽）
         </Btn>
@@ -3297,7 +3320,7 @@ function HealthSummary({ records, products, medLogs = [], treatmentEvents = [], 
     <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:4,fontSize:12,color:COLORS.inkSoft,marginBottom:10}}><button type="button" onClick={()=>onOpenDiary?.(start)} disabled={!onOpenDiary} style={{border:0,background:'transparent',padding:'4px 0',color:COLORS.accent,textDecoration:'underline',cursor:'pointer',font:'inherit'}} aria-label="查看這款飼料第一天的飲食日記">{start}</button><span>～{end}（累計 {trial.length} 天）</span></div>
     <div style={{fontSize:13,lineHeight:1.9,color:COLORS.ink}}><strong>{productName} · 與其他飼料比較</strong><div style={{marginTop:6}}>{feedText}</div></div>
 
-    {otherGroups.length>0&&<details style={{marginTop:10,fontSize:12,color:COLORS.inkSoft}}><summary style={{cursor:'pointer'}}>查看比較的飼料與紀錄天數</summary><div style={{marginTop:6}}>{options.map(o=><div key={o.id}>{o.name}：{ordered.filter(r=>r.productId===o.id).length} 筆日記</div>)}</div></details>}
+
     <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:8}}>不同飼料的使用天數與同期用藥可能不同；這是紀錄比較，不是飼料效果判定。</div>
   </Card>;
 }
