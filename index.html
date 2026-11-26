@@ -2050,7 +2050,6 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
     return (
       <g key={payload.date} style={{ cursor: "pointer" }} onClick={() => dotClick(payload)}>
         <circle cx={cx} cy={cy} r={16} fill="transparent" />
-        <circle cx={cx} cy={cy} r={r + 2.2} fill={COLORS.card} fillOpacity={0.9} />
         <circle cx={cx} cy={cy} r={r} fill={color} />
       </g>
     );
@@ -2065,7 +2064,7 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
       </g>
     );
   };
-  const lineProps = { type: "monotone", strokeLinecap: "round", strokeLinejoin: "round", isAnimationActive: false };
+  const lineProps = { type: "linear", strokeLinecap: "round", strokeLinejoin: "round", isAnimationActive: false };
   // Ticks come from real recorded days (about 6 of them) so every chart — including the sparse
   // events chart — gets a consistent, readable axis instead of whatever the scale auto-picks.
   const tickStep = Math.max(1, Math.ceil(data.length / 6));
@@ -2078,73 +2077,71 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
   // Bands are clamped to the visible window so a product that started before the window still
   // gets its label at the visible left edge. Labels sit at the bottom, which is the emptiest area.
   // ReferenceArea must name the y-axis in dual-axis charts, otherwise it silently doesn't render.
-  const bandEls = (yAxisId) => bands
-    .map((b) => ({ ...b, x1: Math.max(b.x1, domain[0]), x2: Math.min(b.x2, domain[1]) }))
-    .filter((b) => b.x2 > b.x1)
-    .map((b) => (
-      <ReferenceArea
-        key={b.key} x1={b.x1} x2={b.x2} fill={b.fill} fillOpacity={0.26} ifOverflow="hidden"
-        {...(yAxisId ? { yAxisId } : {})}
-        label={b.label ? { value: b.label, position: "insideBottomLeft", fill: b.labelColor || COLORS.inkSoft, fontSize: 11, fontWeight: 700, offset: 6 } : undefined}
-      />
-    ));
+  // Separate feed strip, outside the plotting area. Clip long names to their own segment.
+  const feedStrip = <div style={{display:"flex",position:"relative",height:22,margin:"0 8px 0 38px",overflow:"hidden"}}>{bands.map(b=>{
+    const x1=Math.max(b.x1,domain[0]), x2=Math.min(b.x2,domain[1]);
+    if(x2<=x1)return null;
+    const span=domain[1]-domain[0];
+    return <div key={b.key} title={b.label} style={{position:"absolute",left:100*(x1-domain[0])/span+"%",width:100*(x2-x1)/span+"%",height:20,background:b.fill,color:b.labelColor,fontSize:10,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",boxSizing:"border-box",padding:"3px 2px"}}>{b.label}</div>;
+  })}</div>;
+
 
   if (kind === "health") {
     return (
-      <ResponsiveContainer width="100%" height={height}>
+      <><ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 4 }}>
-          {bandEls("total")}
+
           <CartesianGrid strokeDasharray="2 6" stroke={COLORS.line} strokeOpacity={0.78} vertical={false} />
           <XAxis {...xAxisProps} />
           <YAxis yAxisId="total" axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} width={38} />
           <YAxis yAxisId="mental" orientation="right" domain={[0, 5]} ticks={[0, 1, 2, 3, 4, 5]} axisLine={false} tickLine={false} tickMargin={5} tick={{ fontSize: 10, fill: COLORS.blue }} width={24} />
           <Line yAxisId="total" dataKey="target" type="stepAfter" stroke="#A7B0BC" strokeWidth={1.25} strokeDasharray="4 6" dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-          <Line yAxisId="total" dataKey="total" stroke={COLORS.accent} strokeWidth={3} dot={makeDot(COLORS.accent, 3.2)} activeDot={false} {...lineProps} />
+          <Line yAxisId="total" dataKey="total" stroke={COLORS.accent} strokeWidth={1.5} dot={makeDot(COLORS.accent, 2.5)} activeDot={false} {...lineProps} />
           <Line yAxisId="mental" dataKey="mental" stroke={COLORS.blue} strokeWidth={1.5} strokeOpacity={0.58} strokeDasharray="3 5" dot={makeDot(COLORS.blue, 2.4)} activeDot={false} {...lineProps} />
         </ComposedChart>
-      </ResponsiveContainer>
+      </ResponsiveContainer>{feedStrip}</>
     );
   }
   if (kind === "total") {
     return (
-      <ResponsiveContainer width="100%" height={height}>
+      <><ResponsiveContainer width="100%" height={height}>
         <LineChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 4 }}>
-          {bandEls()}
+
           <CartesianGrid strokeDasharray="2 6" stroke={COLORS.line} strokeOpacity={0.78} vertical={false} />
           <XAxis {...xAxisProps} />
           <YAxis axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} />
           <Line dataKey="target" type="stepAfter" stroke="#A7B0BC" strokeWidth={1.25} strokeDasharray="4 6" dot={false} activeDot={false} connectNulls isAnimationActive={false} />
-          <Line dataKey="total" stroke={COLORS.accent} strokeWidth={3} dot={makeDot(COLORS.accent, 3.2)} activeDot={false} {...lineProps} />
+          <Line dataKey="total" stroke={COLORS.accent} strokeWidth={1.5} dot={makeDot(COLORS.accent, 2.5)} activeDot={false} {...lineProps} />
         </LineChart>
-      </ResponsiveContainer>
+      </ResponsiveContainer>{feedStrip}</>
     );
   }
   if (kind === "mental") {
     return (
-      <ResponsiveContainer width="100%" height={height}>
+      <><ResponsiveContainer width="100%" height={height}>
         <LineChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 4 }}>
-          {bandEls()}
+
           <CartesianGrid strokeDasharray="2 6" stroke={COLORS.line} strokeOpacity={0.78} vertical={false} />
           <XAxis {...xAxisProps} />
           <YAxis domain={[0, 5]} ticks={[0, 1, 2, 3, 4, 5]} axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} />
-          <Line dataKey="mental" stroke={COLORS.blue} strokeWidth={2.2} dot={makeDot(COLORS.blue, 3)} activeDot={false} {...lineProps} />
+          <Line dataKey="mental" stroke={COLORS.blue} strokeWidth={1.5} dot={makeDot(COLORS.blue, 2.5)} activeDot={false} {...lineProps} />
         </LineChart>
-      </ResponsiveContainer>
+      </ResponsiveContainer>{feedStrip}</>
     );
   }
   if (kind === "stool") {
     return (
-      <ResponsiveContainer width="100%" height={height}>
+      <><ResponsiveContainer width="100%" height={height}>
         <LineChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 4 }}>
-          {bandEls()}
+
           {/* normal Bristol range (3–4) shaded so both extremes read as "off" at a glance */}
           <ReferenceArea y1={3} y2={4} fill={COLORS.accent} fillOpacity={0.12} ifOverflow="visible" />
           <CartesianGrid strokeDasharray="2 6" stroke={COLORS.line} strokeOpacity={0.78} vertical={false} />
           <XAxis {...xAxisProps} />
           <YAxis domain={[1, 7]} axisLine={false} tickLine={false} tickMargin={6} tick={{ fontSize: 11, fill: COLORS.inkSoft }} />
-          <Line dataKey="stool" stroke={COLORS.gold} strokeWidth={2.2} dot={makeDot(COLORS.gold, 3)} activeDot={false} {...lineProps} />
+          <Line dataKey="stool" stroke={COLORS.gold} strokeWidth={1.5} dot={makeDot(COLORS.gold, 2.5)} activeDot={false} {...lineProps} />
         </LineChart>
-      </ResponsiveContainer>
+      </ResponsiveContainer>{feedStrip}</>
     );
   }
   // events — discrete markers instead of a misleading continuous line; blank days mean nothing happened
@@ -2158,9 +2155,9 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
     );
   }
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <><ResponsiveContainer width="100%" height={height}>
       <ComposedChart data={data} margin={{ top: 6, right: 8, left: -4, bottom: 4 }}>
-        {bandEls()}
+
         <CartesianGrid strokeDasharray="2 6" stroke={COLORS.line} strokeOpacity={0.78} vertical={false} />
         <XAxis {...xAxisProps} />
         <YAxis type="number" domain={[-1.1, 1.6]} ticks={[0, 1]} width={70} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: COLORS.inkSoft }}
@@ -2168,7 +2165,7 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
         <Scatter data={stoolPts} dataKey="_row" fill={COLORS.gold} shape={makeEventDot(COLORS.gold)} isAnimationActive={false} />
         <Scatter data={vomitPts} dataKey="_row" fill={COLORS.danger} shape={makeEventDot(COLORS.danger)} isAnimationActive={false} />
       </ComposedChart>
-    </ResponsiveContainer>
+    </ResponsiveContainer>{feedStrip}</>
   );
 }
 
@@ -2343,6 +2340,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
 // A table beats a chart here: the question is "on this food, how often did problems happen?",
 // which is a count per feed, not a shape over time.
 function ProductIssueSummary({ records, products }) {
+  const [showHistory,setShowHistory] = useState(false);
   const rows = products
     .map((p) => {
       const rs = records.filter((r) => r.productId === p.id);
@@ -2375,7 +2373,7 @@ function ProductIssueSummary({ records, products }) {
         <BellIcon size={15} color={COLORS.danger} />各飼料的狀況統計
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {rows.map((row) => {
+        {(showHistory ? rows : rows.slice(0,1)).map((row) => {
           const c = swatch(row.p.color);
           const rate = row.vomitDays > 0 ? Math.round(row.days / row.vomitDays) : null;
           return (
@@ -2383,7 +2381,7 @@ function ProductIssueSummary({ records, products }) {
               <div style={{ background: c.bg, padding: "8px 12px" }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: COLORS.ink }}>{row.p.name}</div>
                 <div style={{ fontSize: 11, color: COLORS.inkSoft }}>
-                  {row.start} ～ {row.end}・{row.days} 天・平均 {row.avg}g
+                  {row.start} ～ {row.end}・累計 {row.days} 天・平均 {row.avg}g
                   {row.p.dailyTarget ? `／建議 ${row.p.dailyTarget}g` : ""}
                 </div>
               </div>
@@ -2397,12 +2395,13 @@ function ProductIssueSummary({ records, products }) {
               <div style={{ padding: "0 12px 10px", fontSize: 11, color: COLORS.inkSoft, lineHeight: 1.6 }}>
                 {row.vomitDays === 0
                   ? "這段期間沒有嘔吐紀錄"
-                  : `平均約每 ${rate} 天吐一次`}
+                  : `平均約每 ${rate} 天有一天嘔吐`}
               </div>
             </div>
           );
         })}
       </div>
+      {rows.length>1 && <button type="button" aria-expanded={showHistory} onClick={()=>setShowHistory(v=>!v)} style={{...inputStyle,width:"100%",marginTop:10,cursor:"pointer"}}>{showHistory ? "收合歷史飼料" : `查看其他飼料（${rows.length-1}款）`}</button>}
     </Card>
   );
 }
