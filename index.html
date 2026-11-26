@@ -979,17 +979,15 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
   const showMeds=()=>medList.length?<div style={{display:'flex',flexDirection:'column',gap:7}}>{medList.map(m=><div key={m.name} style={{display:'flex',justifyContent:'space-between',gap:10,fontSize:13,padding:4,borderRadius:6,background:phase.events.some(e=>e.name===m.name)?COLORS.accentSoft:'transparent'}}><strong>{m.name}</strong><span>{m.dose}</span></div>)}</div>:<div style={{fontSize:12,color:COLORS.inkSoft}}>目前沒有從治療變更紀錄確認到持續使用的藥物。</div>;
   return <div style={{display:'flex',flexDirection:'column',gap:12}}>
     {!compact&&<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}><div style={{fontWeight:700,color:COLORS.ink}}>用藥組合歷程</div>{role==='owner'&&<Btn onClick={()=>setOpen(v=>!v)}><Plus size={14}/>記錄變更</Btn>}</div>}
-    {!compact&&phase&&<div style={{display:'flex',flexDirection:'column',gap:7}}><div style={{display:'flex',alignItems:'center',gap:8}}><Btn variant="secondary" disabled={currentIndex===phases.length-1} onClick={()=>{setSelected(currentIndex+1);setDetails(false)}}>‹</Btn><select aria-label="選擇用藥階段" style={{...inputStyle,flex:1,minWidth:0}} value={currentIndex} onChange={e=>{setSelected(Number(e.target.value));setDetails(false)}}>{phases.map((p,i)=><option key={p.date} value={i}>{p.date} 起</option>)}</select><Btn variant="secondary" disabled={currentIndex===0} onClick={()=>{setSelected(currentIndex-1);setDetails(false)}}>›</Btn></div><div style={{display:'flex',justifyContent:'center',flexWrap:'wrap',gap:3}}>{phases.slice().reverse().map((p,j)=>{const i=phases.length-1-j;return <button key={p.date} aria-label={p.date} aria-current={i===currentIndex?'true':undefined} onClick={()=>{setSelected(i);setDetails(false)}} style={{border:0,background:'transparent',padding:'7px 4px',cursor:'pointer'}}><span style={{display:'block',width:8,height:8,borderRadius:'50%',background:i===currentIndex?COLORS.accent:COLORS.line}}/></button>})}</div><div style={{textAlign:'center',fontSize:11,color:COLORS.inkSoft}}>左右滑動查看歷史組合</div></div>}
+    {!compact&&phase&&<div style={{display:'flex',justifyContent:'center',flexWrap:'wrap',gap:3}}>{phases.slice().reverse().map((p,j)=>{const i=phases.length-1-j;return <button key={p.date} aria-label={p.date} aria-current={i===currentIndex?'true':undefined} onClick={()=>{setSelected(i);setDetails(false)}} style={{border:0,background:'transparent',padding:'7px 4px',cursor:'pointer'}}><span style={{display:'block',width:8,height:8,borderRadius:'50%',background:i===currentIndex?COLORS.accent:COLORS.line}}/></button>})}</div>}
     <div key={compact?"compact":phase?.date||"empty"} onTouchStart={e=>{swipeStart.current=[e.touches[0].clientX,e.touches[0].clientY]}} onTouchEnd={e=>{if(compact||!swipeStart.current)return;const [x,y]=swipeStart.current;const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;swipeStart.current=null;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.5){setSelected(Math.max(0,Math.min(phases.length-1,currentIndex+(dx<0?-1:1))));setDetails(false);}}} style={{animation:compact?'none':'regimenSlide .22s ease-out',touchAction:'pan-y',background:compact?COLORS.accentSoft:COLORS.card,border:`1px solid ${COLORS.line}`,borderRadius:12,padding:14}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}><div style={{display:'flex',alignItems:'center',gap:7,fontWeight:700,color:COLORS.ink}}><Pill size={17} color={COLORS.accent}/>{compact?'目前用藥組合':'用藥組合觀察'}</div><span style={{fontSize:11,color:COLORS.inkSoft}}>{phase?`${phase.date} ～ ${phase.end?shiftISO(phase.end,-1):"現在"}`:'尚無變更紀錄'}</span></div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}><div style={{display:'flex',alignItems:'center',gap:7,fontWeight:700,color:COLORS.ink}}><Pill size={17} color={COLORS.accent}/>{compact?'目前用藥組合':'用藥組合觀察'}</div><span style={{fontSize:11,color:COLORS.inkSoft}}>{phase?<><button type="button" onClick={()=>onOpenDiary?.(phase.date,true)} style={{border:0,background:'transparent',padding:0,color:COLORS.accent,font:'inherit',textDecoration:'underline',cursor:'pointer'}}>{phase.date}</button>{` ～ ${phase.end?shiftISO(phase.end,-1):"現在"}`}</>:'尚無變更紀錄'}</span></div>
       {phase&&!compact&&<div style={{fontSize:12,color:COLORS.inkSoft,marginTop:6}}>第 {currentIndex+1} / {phases.length} 期 · {Math.round((Date.parse(phase.end||shiftISO(todayStr(),1))-Date.parse(phase.date))/86400000)} 天</div>}
       <div style={{marginTop:12,padding:12,borderRadius:10,background:COLORS.card}}>{showMeds()}</div>
       {phase?<>
         <div style={{marginTop:12,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>{compact?'這段時間的狀況':'和上一組有什麼不同？'}</strong><div style={{marginTop:4}}>{summary}</div></div>
         {!compact&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>最近幾天</strong><div>{recentText}</div></div>}
         {!compact&&phases.length>1&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85}}><strong>和所有歷史組合比較</strong><div style={{marginTop:4}}>{allSummary}</div></div>}
-        <DiaryDateLinks records={currentRecords} onOpen={onOpenDiary}/>
-        {!compact&&<DiaryDateLinks records={previousRecords} onOpen={onOpenDiary} label="查看上一組的飲食日記"/>}
         {compact?<button onClick={()=>{const btn=document.querySelector('[data-treatment-open]');if(btn)btn.click();}} style={{border:`1px solid ${COLORS.line}`,background:COLORS.card,color:COLORS.accent,borderRadius:9,padding:'10px 12px',fontSize:13,fontWeight:700,marginTop:12,width:'100%',cursor:'pointer'}}>查看前後組合差異 ›</button>:<>
 
           <button onClick={()=>setDetails(v=>!v)} style={{border:'none',background:'transparent',color:COLORS.accent,fontSize:13,fontWeight:700,padding:'12px 0 4px',cursor:'pointer'}}>{details?'收起組合明細':'查看上一組與這一組的藥物差異'} ▾</button>
@@ -3742,9 +3740,9 @@ function App() {
     return prod;
   };
 
-  const openDayByDate = (date) => {
+  const openDayByDate = (date, showMissing = false) => {
     const rec = records.find((r) => r.date === date);
-    if (!rec) return;
+    if (!rec) { if(showMissing === true) window.alert(`${date} 尚無飲食日記。`); return; }
     setModal({ type: "dayPanel", payload: rec });
   };
   const openInHistory = (date) => { setTab("history"); openDayByDate(date); };
