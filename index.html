@@ -949,7 +949,15 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
   const [before,setBefore]=useState(''),[after,setAfter]=useState(''),[note,setNote]=useState(''),[active,setActive]=useState(true);
   const names=[...new Set([...medPresets,...events,...medLogs].map(m=>String(m.name||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-Hant'));
   const [manualName,setManualName]=useState(false);
-  const chooseName=n=>{setName(n);setManualName(false);const p=medPresets.filter(m=>m.name===n&&(!m.startDate||m.startDate<=date)&&(!m.endDate||m.endDate>=date)).sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''))[0];const e=events.filter(m=>m.name===n&&m.date<date).sort((a,b)=>b.date.localeCompare(a.date))[0];setBefore(p?`${p.dose||'劑量未填'} · 每${p.intervalDays||1}天${medCount(p)}次`:e?.after||'');};
+  const historicalBefore=(n,d,id=editing)=>{
+    if(!n||!d)return '';
+    const e=events.filter(m=>m.name===n&&m.id!==id&&m.date<d&&m.active!==false).sort((a,b)=>b.date.localeCompare(a.date))[0];
+    if(e)return String(e.kind||'').includes('停藥')?'':(e.after||'');
+    const p=medPresets.filter(m=>m.name===n&&m.startDate&&m.startDate<d&&(!m.endDate||m.endDate>=d)).sort((a,b)=>b.startDate.localeCompare(a.startDate))[0];
+    return p&&p.dose?`${p.dose} · 每${p.intervalDays||1}天${medCount(p)}次`:'';
+  };
+  const chooseName=n=>{setName(n);setManualName(false);setBefore(historicalBefore(n,date));};
+  const changeDate=d=>{setDate(d);setBefore(historicalBefore(name,d));};
   const reset=()=>{setEditing(null);setManualName(false);setName('');setKind('調整劑量／頻率');setDate(todayStr());setBefore('');setAfter('');setNote('');setActive(true);setOpen(false);};
   const edit=e=>{setEditing(e.id);setManualName(false);setName(e.name);setKind(e.kind);setDate(e.date);setBefore(e.before||'');setAfter(e.after||'');setNote(e.note||'');setActive(e.active!==false);setOpen(true);};
   const save=()=>{if(!name.trim()||!date||(!after.trim()&&!kind.includes('停藥')))return;const data={id:editing||uid(),name:name.trim(),kind,date,before:before.trim(),after:kind.includes('停藥')?'停用':after.trim(),note:note.trim(),active};if(editing)onUpdate(data);else onAdd(data);reset();};
@@ -989,12 +997,13 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
     </div>
     {!compact&&open&&role==='owner'&&<Card><div style={{fontWeight:700,marginBottom:10}}>記錄用藥組合變更</div><div style={{display:'flex',flexDirection:'column',gap:9}}>
       <select value={kind} onChange={e=>setKind(e.target.value)} style={inputStyle}>{['開始服用','增加劑量','減少劑量','調整劑量／頻率','更換藥物／成分','開始保健食品','停藥','恢復服用','其他治療變更'].map(k=><option key={k}>{k}</option>)}</select>
-      <input style={inputStyle} type="date" value={date} onChange={e=>setDate(e.target.value)}/>
+      <input style={inputStyle} type="date" value={date} onChange={e=>changeDate(e.target.value)}/>
       <label style={{fontSize:12,color:COLORS.inkSoft}}>藥物或保健食品名稱</label>
       <select style={inputStyle} value={manualName?'__manual__':name} onChange={e=>{if(e.target.value==='__manual__'){setManualName(true);setName('');setBefore('');}else chooseName(e.target.value);}}><option value="">請選擇藥物</option>{names.map(n=><option key={n} value={n}>{n}</option>)}<option value="__manual__">＋ 手動輸入其他藥物</option></select>
-      {manualName&&<input style={inputStyle} placeholder="輸入新藥物或保健食品名稱" value={name} onChange={e=>setName(e.target.value)}/>}
-      <input style={inputStyle} placeholder="變更前（可留空）" value={before} onChange={e=>setBefore(e.target.value)}/>
-      {!kind.includes('停藥')&&<input style={inputStyle} placeholder="變更後（必填）" value={after} onChange={e=>setAfter(e.target.value)}/>}
+      {manualName&&<input style={inputStyle} placeholder="輸入新藥物或保健食品名稱" value={name} onChange={e=>{setName(e.target.value);setBefore(historicalBefore(e.target.value,date));}}/>}
+      <label style={{fontSize:12,color:COLORS.inkSoft}}>{kind.includes('停藥')?'停藥前劑量（可修改）':'變更前劑量／頻率（可修改）'}</label>
+      <input style={inputStyle} placeholder="無歷史資料時可手動填寫或留空" value={before} onChange={e=>setBefore(e.target.value)}/>
+      {kind.includes('停藥')?<div style={{padding:12,borderRadius:8,background:COLORS.accentSoft,fontSize:13}}>變更後狀態：停止服用（不需要輸入 0）</div>:<><label style={{fontSize:12,color:COLORS.inkSoft}}>變更後劑量／頻率（必填）</label><input style={inputStyle} placeholder="輸入新劑量及頻率" value={after} onChange={e=>setAfter(e.target.value)}/></>}
       <textarea style={inputStyle} rows={2} placeholder="備註（選填）" value={note} onChange={e=>setNote(e.target.value)}/>
       <div style={{fontSize:11,color:COLORS.inkSoft}}>同一天的多項調整會合併成一組。這裡只記錄組合變更，不會自動改動每日用藥排程；尚未補登的藥物不會憑空列入。</div>
       <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}><Btn variant="ghost" onClick={reset}>取消</Btn><Btn onClick={save} disabled={!name.trim()||!date||(!after.trim()&&!kind.includes('停藥'))}>儲存變更</Btn></div>
