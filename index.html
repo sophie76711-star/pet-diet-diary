@@ -3283,8 +3283,9 @@ function HealthSummary({ records, products, medLogs = [], treatmentEvents = [], 
     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}><JournalIcon size={18} color={COLORS.accent}/><div style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>飼料分析</div></div>
     <div style={{fontSize:12,color:COLORS.inkSoft,marginBottom:12}}>與所有有紀錄的飼料比較，並查看同期用藥</div>
     <select value={run.key} onChange={e=>setSelected(e.target.value)} style={{...inputStyle,width:'100%',marginBottom:12}}>{runs.map(p=><option key={p.key} value={p.key}>{options.find(o=>o.id===p.id)?.name} · {p.key}～{p.records[p.records.length-1].date}</option>)}</select>
+    <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:4,fontSize:12,color:COLORS.inkSoft,marginBottom:10}}><button type="button" onClick={()=>onOpenDiary?.(start)} disabled={!onOpenDiary} style={{border:0,background:'transparent',padding:'4px 0',color:COLORS.accent,textDecoration:'underline',cursor:'pointer',font:'inherit'}} aria-label="查看這款飼料第一天的飲食日記">{start}</button><span>～{end}</span></div>
     <div style={{fontSize:13,lineHeight:1.9,color:COLORS.ink}}><strong>{productName} · 與其他飼料比較</strong><div style={{marginTop:6}}>{feedText}</div></div>
-    <DiaryDateLinks records={trial} onOpen={onOpenDiary} label="查看這款飼料的飲食日記"/>
+
     {otherGroups.length>0&&<details style={{marginTop:10,fontSize:12,color:COLORS.inkSoft}}><summary style={{cursor:'pointer'}}>查看比較的飼料與紀錄天數</summary><div style={{marginTop:6}}>{options.map(o=><div key={o.id}>{o.name}：{ordered.filter(r=>r.productId===o.id).length} 筆日記</div>)}</div></details>}
     <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:8}}>不同飼料的使用天數與同期用藥可能不同；這是紀錄比較，不是飼料效果判定。</div>
   </Card>;
