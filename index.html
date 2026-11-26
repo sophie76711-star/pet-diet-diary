@@ -943,12 +943,15 @@ function DiaryDateLinks({records,onOpen,label="查看這段期間的飲食日記
     {dates.length?<div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:8}}>{dates.map(d=><button key={d} type="button" onClick={()=>onOpen(d)} style={{border:`1px solid ${COLORS.line}`,background:COLORS.card,color:COLORS.accent,borderRadius:8,padding:'9px 10px',cursor:'pointer',textDecoration:'underline'}}>{d} ›</button>)}</div>:<div style={{marginTop:8}}>這段期間沒有飲食日記。</div>}
   </details>;
 }
-function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false,medLogs=[],products=[],onOpenDiary}) {
+function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=false,medLogs=[],products=[],medPresets=[],onOpenDiary}) {
   const [open,setOpen]=useState(false),[editing,setEditing]=useState(null),[selected,setSelected]=useState(null),[details,setDetails]=useState(false);
   const [name,setName]=useState(''),[kind,setKind]=useState('調整劑量／頻率'),[date,setDate]=useState(todayStr());
   const [before,setBefore]=useState(''),[after,setAfter]=useState(''),[note,setNote]=useState(''),[active,setActive]=useState(true);
-  const reset=()=>{setEditing(null);setName('');setKind('調整劑量／頻率');setDate(todayStr());setBefore('');setAfter('');setNote('');setActive(true);setOpen(false);};
-  const edit=e=>{setEditing(e.id);setName(e.name);setKind(e.kind);setDate(e.date);setBefore(e.before||'');setAfter(e.after||'');setNote(e.note||'');setActive(e.active!==false);setOpen(true);};
+  const names=[...new Set([...medPresets,...events,...medLogs].map(m=>String(m.name||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+  const [manualName,setManualName]=useState(false);
+  const chooseName=n=>{setName(n);setManualName(false);const p=medPresets.filter(m=>m.name===n&&(!m.startDate||m.startDate<=date)&&(!m.endDate||m.endDate>=date)).sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''))[0];const e=events.filter(m=>m.name===n&&m.date<date).sort((a,b)=>b.date.localeCompare(a.date))[0];setBefore(p?`${p.dose||'劑量未填'} · 每${p.intervalDays||1}天${medCount(p)}次`:e?.after||'');};
+  const reset=()=>{setEditing(null);setManualName(false);setName('');setKind('調整劑量／頻率');setDate(todayStr());setBefore('');setAfter('');setNote('');setActive(true);setOpen(false);};
+  const edit=e=>{setEditing(e.id);setManualName(false);setName(e.name);setKind(e.kind);setDate(e.date);setBefore(e.before||'');setAfter(e.after||'');setNote(e.note||'');setActive(e.active!==false);setOpen(true);};
   const save=()=>{if(!name.trim()||!date||(!after.trim()&&!kind.includes('停藥')))return;const data={id:editing||uid(),name:name.trim(),kind,date,before:before.trim(),after:kind.includes('停藥')?'停用':after.trim(),note:note.trim(),active};if(editing)onUpdate(data);else onAdd(data);reset();};
   const phases=buildRegimenPhases(events);
   const current=phases[phases.length-1];
@@ -985,9 +988,11 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
       </>:<div style={{fontSize:12,color:COLORS.inkSoft,marginTop:10}}>請到「治療變更」記錄第一次用藥組合。原有每日用藥日記不會被更動。</div>}
     </div>
     {!compact&&open&&role==='owner'&&<Card><div style={{fontWeight:700,marginBottom:10}}>記錄用藥組合變更</div><div style={{display:'flex',flexDirection:'column',gap:9}}>
-      <select value={kind} onChange={e=>setKind(e.target.value)} style={inputStyle}>{['調整劑量／頻率','更換藥物／成分','開始保健食品','停藥','其他治療變更'].map(k=><option key={k}>{k}</option>)}</select>
+      <select value={kind} onChange={e=>setKind(e.target.value)} style={inputStyle}>{['開始服用','增加劑量','減少劑量','調整劑量／頻率','更換藥物／成分','開始保健食品','停藥','恢復服用','其他治療變更'].map(k=><option key={k}>{k}</option>)}</select>
       <input style={inputStyle} type="date" value={date} onChange={e=>setDate(e.target.value)}/>
-      <input style={inputStyle} placeholder="藥物或保健食品名稱" value={name} onChange={e=>setName(e.target.value)}/>
+      <label style={{fontSize:12,color:COLORS.inkSoft}}>藥物或保健食品名稱</label>
+      <select style={inputStyle} value={manualName?'__manual__':name} onChange={e=>{if(e.target.value==='__manual__'){setManualName(true);setName('');setBefore('');}else chooseName(e.target.value);}}><option value="">請選擇藥物</option>{names.map(n=><option key={n} value={n}>{n}</option>)}<option value="__manual__">＋ 手動輸入其他藥物</option></select>
+      {manualName&&<input style={inputStyle} placeholder="輸入新藥物或保健食品名稱" value={name} onChange={e=>setName(e.target.value)}/>}
       <input style={inputStyle} placeholder="變更前（可留空）" value={before} onChange={e=>setBefore(e.target.value)}/>
       {!kind.includes('停藥')&&<input style={inputStyle} placeholder="變更後（必填）" value={after} onChange={e=>setAfter(e.target.value)}/>}
       <textarea style={inputStyle} rows={2} placeholder="備註（選填）" value={note} onChange={e=>setNote(e.target.value)}/>
@@ -3996,7 +4001,7 @@ function App() {
                 onManageMedPresets={role === "owner" ? () => setMedPresetsOpen(true) : undefined}
               />
             )}
-            {tab === "treatment" && <TreatmentTracker onOpenDiary={openDayByDate} events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products}
+            {tab === "treatment" && <TreatmentTracker onOpenDiary={openDayByDate} events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products} medPresets={medPresets}
               onAdd={e=>persistTreatmentEvents([...treatmentEvents,e])}
               onUpdate={e=>persistTreatmentEvents(treatmentEvents.map(x=>x.id===e.id?e:x))}
               onDelete={id=>setConfirmDialog({message:"確定刪除這筆治療變更嗎？不會影響原本用藥及飲食日記。",onYes:()=>persistTreatmentEvents(treatmentEvents.filter(x=>x.id!==id))})}
