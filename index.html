@@ -3248,8 +3248,8 @@ function HealthSummary({ records, products, medLogs = [], treatmentEvents = [], 
   if(!ordered.length)return null;
   const ids=[...new Set(ordered.map(r=>r.productId))];
   const options=ids.map(id=>({id,name:products.find(p=>p.id===id)?.name||'未命名飼料'}));
-  const runs=[];ordered.forEach(r=>{let run=runs[runs.length-1];if(!run||run.id!==r.productId){run={id:r.productId,key:r.date,records:[]};runs.push(run);}run.records.push(r);});
-  const run=runs.find(r=>r.key===selected)||runs[runs.length-1];
+  const runs=options.map(o=>({id:o.id,key:o.id,records:ordered.filter(r=>r.productId===o.id)}));
+  const run=runs.find(r=>r.key===selected)||runs.find(r=>r.id===ordered[ordered.length-1].productId);
   const chosen=run.id;
   const trial=run.records;
   const otherGroups=options.filter(o=>o.id!==chosen).map(o=>({name:o.name,records:ordered.filter(r=>r.productId===o.id)}));
@@ -3275,19 +3275,27 @@ function HealthSummary({ records, products, medLogs = [], treatmentEvents = [], 
   const otherDays=otherMetrics.reduce((a,g)=>a+g.metric.days,0),otherV=otherMetrics.reduce((a,g)=>a+g.metric.vomitDays,0);if(otherDays)parts.push(`其他飼料有日記的日期中，${otherV}／${otherDays}天有嘔吐`);
   const start=trial[0]?.date||'9999-12-31';
   const end=trial[trial.length-1]?.date||start;
-  const medNames=[...new Set((medLogs||[]).filter(l=>l.date>=start&&l.date<=end&&l.name).map(l=>l.name))];
-  const overlapping=(treatmentEvents||[]).filter(e=>e.date<=end&&e.name);
-  const latest=new Map();
-  overlapping.sort((a,b)=>a.date.localeCompare(b.date)).forEach(e=>{const key=e.name.trim().toLowerCase();if(String(e.kind||'').includes('停藥')||String(e.after||'').trim()==='停用')latest.delete(key);else latest.set(key,e.name);});
-  const factors=[...new Set([...medNames,...latest.values()])];
-  const changes=(treatmentEvents||[]).filter(e=>e.date>=start&&e.date<=end);
+  const dates=new Set(trial.map(r=>r.date));
+  const medNames=[...new Set((medLogs||[]).filter(l=>dates.has(l.date)&&l.name).map(l=>l.name))];
+  const events=(treatmentEvents||[]).filter(e=>e.date&&e.name).slice().sort((a,b)=>a.date.localeCompare(b.date));
+  const latest=new Map(), activeNames=new Set();
+  let eventIndex=0;
+  for(const r of trial){
+    while(eventIndex<events.length&&events[eventIndex].date<=r.date){
+      const e=events[eventIndex++],key=e.name.trim().toLowerCase();
+      if(String(e.kind||'').includes('停藥')||String(e.after||'').trim()==='停用')latest.delete(key);else latest.set(key,e.name);
+    }
+    latest.forEach(name=>activeNames.add(name));
+  }
+  const factors=[...new Set([...medNames,...activeNames])];
+  const changes=events.filter(e=>dates.has(e.date));
   const note=changes.length?`同期還有${changes.slice(0,2).map(e=>e.name+'調整').join('、')}，不能只歸因於飼料。`:factors.length?`同期也使用${factors.slice(0,3).join('、')}，不能單看飼料判斷原因。`:'其他藥物變化若未登錄，無法排除影響。';
   const feedText=shortObservation(parts.join('。')+'。',note);
   return <Card style={{marginBottom:14}}>
     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}><JournalIcon size={18} color={COLORS.accent}/><div style={{fontSize:16,fontWeight:800,color:COLORS.ink}}>飼料分析</div></div>
     <div style={{fontSize:12,color:COLORS.inkSoft,marginBottom:12}}>與所有有紀錄的飼料比較，並查看同期用藥</div>
-    <select value={run.key} onChange={e=>setSelected(e.target.value)} style={{...inputStyle,width:'100%',marginBottom:12}}>{runs.map(p=><option key={p.key} value={p.key}>{options.find(o=>o.id===p.id)?.name} · {p.key}～{p.records[p.records.length-1].date}</option>)}</select>
-    <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:4,fontSize:12,color:COLORS.inkSoft,marginBottom:10}}><button type="button" onClick={()=>onOpenDiary?.(start)} disabled={!onOpenDiary} style={{border:0,background:'transparent',padding:'4px 0',color:COLORS.accent,textDecoration:'underline',cursor:'pointer',font:'inherit'}} aria-label="查看這款飼料第一天的飲食日記">{start}</button><span>～{end}</span></div>
+    <select value={run.key} onChange={e=>setSelected(e.target.value)} style={{...inputStyle,width:'100%',marginBottom:12}}>{runs.map(p=><option key={p.key} value={p.key}>{options.find(o=>o.id===p.id)?.name} · {p.records.length}天</option>)}</select>
+    <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:4,fontSize:12,color:COLORS.inkSoft,marginBottom:10}}><button type="button" onClick={()=>onOpenDiary?.(start)} disabled={!onOpenDiary} style={{border:0,background:'transparent',padding:'4px 0',color:COLORS.accent,textDecoration:'underline',cursor:'pointer',font:'inherit'}} aria-label="查看這款飼料第一天的飲食日記">{start}</button><span>～{end}（累計 {trial.length} 天）</span></div>
     <div style={{fontSize:13,lineHeight:1.9,color:COLORS.ink}}><strong>{productName} · 與其他飼料比較</strong><div style={{marginTop:6}}>{feedText}</div></div>
 
     {otherGroups.length>0&&<details style={{marginTop:10,fontSize:12,color:COLORS.inkSoft}}><summary style={{cursor:'pointer'}}>查看比較的飼料與紀錄天數</summary><div style={{marginTop:6}}>{options.map(o=><div key={o.id}>{o.name}：{ordered.filter(r=>r.productId===o.id).length} 筆日記</div>)}</div></details>}
