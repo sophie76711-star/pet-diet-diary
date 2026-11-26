@@ -851,6 +851,17 @@ function buildRegimenPhases(events) {
   });
 }
 function shiftISO(d,n){const x=new Date(d+'T12:00:00Z');x.setUTCDate(x.getUTCDate()+n);return x.toISOString().slice(0,10);}
+// Analysis-only calendar defaults for Simba; never persisted as actual diary entries.
+function assumedDiaryRecords(records, products, petName, end) {
+  if (!/辛巴|^simba$/i.test(String(petName||'').trim())) return records;
+  const result=[...records], existing=new Set(records.map(r=>r.date));
+  for(let date='2026-08-16';date<=end;date=shiftISO(date,1)) {
+    if(existing.has(date)) continue;
+    const active=products.filter(p=>p.startDate&&p.startDate<=date&&(!p.endDate||p.endDate>=date)).sort((a,b)=>b.startDate.localeCompare(a.startDate));
+    result.push({id:'assumed-'+date,date,productId:active[0]?.id||'',breakfast:0,dinner:0,bedtime:0,mental:3,stool:4,vomit:0,other:'',stress:'',photos:[],assumedDiary:true});
+  }
+  return result.sort((a,b)=>a.date.localeCompare(b.date));
+}
 function phaseRecords(records,start,end) {
   return [...(records||[])].filter(r=>r.date&&r.date>=start&&r.date<=todayStr()&&(!end||r.date<end)).sort((a,b)=>a.date.localeCompare(b.date));
 }
@@ -2215,7 +2226,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
   const endDrag = () => { dragRef.current = null; setDragging(false); };
 
   const handlePointClick = (date) => setSelectedDate(date);
-  const selectedRecord = selectedDate ? chartData.find((d) => d.date === selectedDate) : null;
+  const selectedRecord = selectedDate ? chartData.find((d) => d.date === selectedDate && !d.assumedDiary) : null;
   const selectedProduct = selectedRecord ? products.find((p) => p.id === selectedRecord.productId) : null;
 
   const zoomPresets = [7, 20, 30, 60];
@@ -3683,6 +3694,7 @@ function App() {
 
 
   const currentPet = pets.find((p) => p.id === petId) || null;
+  const analysisRecords = useMemo(() => assumedDiaryRecords(records, products, currentPet?.name, currentDay), [records, products, currentPet?.name, currentDay]);
   const savePet = async (pet) => {
     const exists = pets.some((p) => p.id === pet.id);
     await persistPets(exists ? pets.map((p) => (p.id === pet.id ? pet : p)) : [...pets, pet]);
@@ -3989,8 +4001,8 @@ function App() {
         ) : tab === null ? (
           // ---- Layer 2: hub menu — health summary, then hand-drawn icon tiles ----
           <>
-          <TreatmentTracker compact onOpenDiary={openDayByDate} events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products}/>
-          <HealthSummary onOpenDiary={openDayByDate} records={records} products={products} medLogs={medLogs} treatmentEvents={treatmentEvents}/>
+          <TreatmentTracker compact onOpenDiary={openDayByDate} events={treatmentEvents} records={analysisRecords} role={role} medLogs={medLogs} products={products}/>
+          <HealthSummary onOpenDiary={openDayByDate} records={analysisRecords} products={products} medLogs={medLogs} treatmentEvents={treatmentEvents}/>
           {role === "owner" && (
             <Card style={{ marginBottom: 14 }}>
               <TodayMedicationList date={currentDay} medPresets={medPresets} medLogs={medLogs} role={role} onToggle={toggleMedPreset} onManual={addManualMedLog} onRemove={removeMedLog} onOpenDiary={openDayByDate}/>
@@ -4025,7 +4037,7 @@ function App() {
           <div>
             {tab === "dashboard" && (
               <Dashboard
-                records={records} products={products} treatmentEvents={treatmentEvents}
+                records={analysisRecords} products={products} treatmentEvents={treatmentEvents}
                 role={role} existingDates={existingDates}
                 onSaveRecord={saveRecord} onDeleteRecord={deleteRecord}
                 onOpenInHistory={openInHistory} onQuickAddProduct={quickAddProduct}
@@ -4051,7 +4063,7 @@ function App() {
                 onManageMedPresets={role === "owner" ? () => setMedPresetsOpen(true) : undefined}
               />
             )}
-            {tab === "treatment" && <TreatmentTracker onOpenDiary={openDayByDate} events={treatmentEvents} records={records} role={role} medLogs={medLogs} products={products} medPresets={medPresets}
+            {tab === "treatment" && <TreatmentTracker onOpenDiary={openDayByDate} events={treatmentEvents} records={analysisRecords} role={role} medLogs={medLogs} products={products} medPresets={medPresets}
               onAdd={e=>persistTreatmentEvents([...treatmentEvents,e])}
               onUpdate={e=>persistTreatmentEvents(treatmentEvents.map(x=>x.id===e.id?e:x))}
               onDelete={id=>setConfirmDialog({message:"確定刪除這筆治療變更嗎？不會影響原本用藥及飲食日記。",onYes:()=>persistTreatmentEvents(treatmentEvents.filter(x=>x.id!==id))})}
