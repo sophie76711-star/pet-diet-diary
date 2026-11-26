@@ -20,7 +20,7 @@
 <!-- Firebase (compat build works without a bundler) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<style>@keyframes regimenSlide{from{opacity:.5;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}@media(prefers-reduced-motion:reduce){*{animation-duration:0s!important}}</style><style>.expanded-landscape{position:fixed;inset:0;display:flex;flex-direction:column;overflow:hidden}.expanded-landscape-header{padding:10px 16px!important}.expanded-landscape-body{min-height:0}.expanded-landscape .expanded-plot{touch-action:none!important}@media (orientation:portrait){.expanded-landscape{inset:auto;top:50%;left:50%;width:100dvh;height:100dvw;transform:translate(-50%,-50%) rotate(90deg);}.expanded-landscape-header{padding-left: max(16px,env(safe-area-inset-top))!important;}}</style></head>
+<style>@keyframes regimenSlide{from{opacity:.5;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}@media(prefers-reduced-motion:reduce){*{animation-duration:0s!important}}</style></head>
 <body>
 <div id="root"><div id="boot">載入中…</div></div>
 
@@ -2047,7 +2047,7 @@ function dailyFeedBands(data, products) {
   const result=[];
   for (const r of [...data].sort((a,b)=>a.ts-b.ts)) {
     const p=products.find(p=>p.id===r.productId);
-    if(!p) continue;
+    if(!p || r.assumedDiary) continue;
     const c=swatch(p.color), last=result[result.length-1], x1=r.ts-43200000, x2=r.ts+43200000;
     if(last && last.productId===p.id && last.x2===x1) last.x2=x2;
     else result.push({x1,x2,fill:c.bg,labelColor:c.border,key:p.id+'-'+r.date,productId:p.id,label:p.name});
@@ -2190,10 +2190,6 @@ const ZOOM_STEP = 5;
 
 function ExpandedChartView({ chartData, bands, products, role, existingDates, onSaveRecord, onDeleteRecord, metric, initialDate, onOpenInHistory, onQuickAddProduct, onClose, onConfirm, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const meta = CHART_META[metric] || CHART_META.health;
-  const readViewport=()=>({w:window.visualViewport?.width||window.innerWidth,h:window.visualViewport?.height||window.innerHeight});
-  const [viewport,setViewport]=useState(readViewport);
-  useEffect(()=>{const update=()=>setViewport(readViewport());window.addEventListener('resize',update);window.visualViewport?.addEventListener('resize',update);return()=>{window.removeEventListener('resize',update);window.visualViewport?.removeEventListener('resize',update);};},[]);
-  const rotated=viewport.h>viewport.w;
   const total = chartData.length;
   const initialIndex = initialDate ? chartData.findIndex((d) => d.date === initialDate) : -1;
   const defaultViewDays = Math.min(20, total || 20);
@@ -2227,11 +2223,11 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
 
   const DRAG_THRESHOLD = 6;
   const onPointerDown = (e) => {
-    dragRef.current = { startX: rotated?e.clientY:e.clientX, startWindowStart: windowStart, moved: false, pointerId: e.pointerId, target: e.currentTarget };
+    dragRef.current = { startX: e.clientX, startWindowStart: windowStart, moved: false, pointerId: e.pointerId, target: e.currentTarget };
   };
   const onPointerMove = (e) => {
     if (!dragRef.current || !containerRef.current) return;
-    const deltaX = (rotated?e.clientY:e.clientX) - dragRef.current.startX;
+    const deltaX = e.clientX - dragRef.current.startX;
     if (!dragRef.current.moved) {
       if (Math.abs(deltaX) < DRAG_THRESHOLD) return; // small movement — treat as a tap, don't hijack it
       dragRef.current.moved = true;
@@ -2252,8 +2248,8 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
   const zoomPresets = [7, 20, 30, 60];
 
   return ReactDOM.createPortal(
-    <div className="expanded-landscape" style={{ background: COLORS.bg, zIndex: 1000, position:"fixed", inset:"auto", top:0,left:0,width:rotated?viewport.h:viewport.w,height:rotated?viewport.w:viewport.h,transformOrigin:"top left",transform:rotated?`translateX(${viewport.w}px) rotate(90deg)`:"none",display:"flex",flexDirection:"column",overflow:"hidden",fontFamily:"IBM Plex Sans, sans-serif",color:COLORS.ink }}> 
-      <div className="expanded-landscape-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 40px)", borderBottom: `1px solid ${COLORS.line}`, gap: 8 }}>
+    <div className="expanded-chart" style={{ background: COLORS.bg, zIndex: 1000, position:"fixed", inset:0,display:"flex",flexDirection:"column",overflow:"hidden",fontFamily:"IBM Plex Sans, sans-serif",color:COLORS.ink }}> 
+      <div className="expanded-chart-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", paddingTop: "calc(env(safe-area-inset-top, 0px) + 40px)", borderBottom: `1px solid ${COLORS.line}`, gap: 8 }}>
         <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.inkSoft, display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>
           <X size={20} />關閉
         </button>
@@ -2267,7 +2263,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
         <div style={{ width: 56, flexShrink: 0 }} />
       </div>
 
-      <div className="expanded-landscape-body" style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+      <div className="expanded-chart-body" style={{ flex: 1, overflowY: "auto", padding: 12 }}>
         {meta.legend && <TrendLegend series={meta.legend} />}
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
@@ -2308,7 +2304,7 @@ function ExpandedChartView({ chartData, bands, products, role, existingDates, on
             onTouchEnd={()=>{expandedPinch.current=null;}} onTouchCancel={()=>{expandedPinch.current=null;}}
             style={{ cursor: dragging ? "grabbing" : "grab", touchAction: "pan-y" }}
           >
-            <MetricChart data={windowed} bands={bands} domain={domain} height={Math.max(120,Math.min(250,(rotated?viewport.w:viewport.h)-170))} onPointClick={handlePointClick} products={products} kind={meta.kind} />
+            <MetricChart data={windowed} bands={bands} domain={domain} height={250} onPointClick={handlePointClick} products={products} kind={meta.kind} />
           </div>
         </Card>
 
@@ -2504,8 +2500,7 @@ function Dashboard({ records, products, treatmentEvents=[], role, existingDates,
   // A band runs from the START of its first day to the END of its last day, so consecutive
   // products touch at midnight instead of leaving a one-day white gap between them.
   const latestTs = chartData.length ? chartData[chartData.length - 1].ts : toTs(todayStr());
-  const bands = [];
-  for(const r of chartData){const p=products.find(p=>p.id===r.productId);if(!p)continue;const c=swatch(p.color),last=bands[bands.length-1],x1=r.ts-DAY/2,x2=r.ts+DAY/2;if(last&&last.productId===p.id&&last.x2===x1){last.x2=x2;}else bands.push({x1,x2,fill:c.bg,labelColor:c.border,key:p.id+"-"+r.date,productId:p.id,label:p.name});}
+  const bands = dailyFeedBands(chartData, products);
 
   const openExpanded = (metric, date) => setExpanded({ metric, date: date || null });
 
