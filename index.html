@@ -972,31 +972,29 @@ function TreatmentTracker({events,records,role,onAdd,onUpdate,onDelete,compact=f
   const factors=phase?concurrentFactors(events,medLogs,records,phase.date,phase.end,products):null;
   const summary=phase?shortObservation(compareRegimen(phaseMetrics(previousRecords),phaseMetrics(currentRecords)),factorNote(factors,'med')):'';
   const allSummary=phase?shortObservation(overallRegimenComparison(phases,records,currentIndex),factorNote(factors,'med')):'';
-  const lastDay=phase?.end?shiftISO(phase.end,-1):todayStr();
-  const recent=phaseMetrics(currentRecords.filter(r=>r.date>=shiftISO(lastDay,-2)&&r.date<=lastDay));
-  const recentText=recent.days?`最近幾天，${recent.avg!==null?'有持續記錄食量，':''}${stoolDescription(recent.stools)}${recent.vomitRecorded?`，${recent.vomitDays?'也有嘔吐紀錄':'已填寫的日記沒有記錄到嘔吐'}`:'，嘔吐情況尚未完整填寫'}。`:'目前這一組還沒有最近的健康紀錄。';
   const medList=phase?.meds||[];
-  const showMeds=()=>medList.length?<div style={{display:'flex',flexDirection:'column',gap:7}}>{medList.map(m=><div key={m.name} style={{display:'flex',justifyContent:'space-between',gap:10,fontSize:13,padding:4,borderRadius:6,background:phase.events.some(e=>e.name===m.name)?COLORS.accentSoft:'transparent'}}><strong>{m.name}</strong><span>{m.dose}</span></div>)}</div>:<div style={{fontSize:12,color:COLORS.inkSoft}}>目前沒有從治療變更紀錄確認到持續使用的藥物。</div>;
+  const showMeds=()=>medList.length?<div style={{display:'flex',flexDirection:'column',gap:7}}>{medList.map(m=><div key={m.name} style={{display:'flex',justifyContent:'space-between',gap:6,fontSize:13,padding:4,borderRadius:6,background:phase.events.some(e=>e.name===m.name)?COLORS.accentSoft:'transparent'}}><strong style={{overflowWrap:"anywhere",minWidth:0}}>{m.name}</strong><span style={{textAlign:"right",overflowWrap:"anywhere",minWidth:0}}>{m.dose}</span></div>)}</div>:<div style={{fontSize:12,color:COLORS.inkSoft}}>目前沒有從治療變更紀錄確認到持續使用的藥物。</div>;
   return <div style={{display:'flex',flexDirection:'column',gap:12}}>
     {!compact&&<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}><div style={{fontWeight:700,color:COLORS.ink}}>用藥組合歷程</div>{role==='owner'&&<Btn onClick={()=>setOpen(v=>!v)}><Plus size={14}/>記錄變更</Btn>}</div>}
     {!compact&&phase&&<div style={{display:'flex',justifyContent:'center',flexWrap:'wrap',gap:3}}>{phases.slice().reverse().map((p,j)=>{const i=phases.length-1-j;return <button key={p.date} aria-label={p.date} aria-current={i===currentIndex?'true':undefined} onClick={()=>{setSelected(i);setDetails(false)}} style={{border:0,background:'transparent',padding:'7px 4px',cursor:'pointer'}}><span style={{display:'block',width:8,height:8,borderRadius:'50%',background:i===currentIndex?COLORS.accent:COLORS.line}}/></button>})}</div>}
-    <div key={compact?"compact":phase?.date||"empty"} onTouchStart={e=>{swipeStart.current=[e.touches[0].clientX,e.touches[0].clientY]}} onTouchEnd={e=>{if(compact||!swipeStart.current)return;const [x,y]=swipeStart.current;const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;swipeStart.current=null;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.5){setSelected(Math.max(0,Math.min(phases.length-1,currentIndex+(dx<0?-1:1))));setDetails(false);}}} style={{animation:compact?'none':'regimenSlide .22s ease-out',touchAction:'pan-y',background:compact?COLORS.accentSoft:COLORS.card,border:`1px solid ${COLORS.line}`,borderRadius:12,padding:14}}>
+    <div style={{display:'grid',gridTemplateColumns:compact?'minmax(0,1fr)':'18px minmax(0,1fr) 18px',alignItems:'start',gap:2}}>
+    {!compact&&<div style={{position:'sticky',top:'45vh',paddingTop:12}}>{currentIndex<phases.length-1&&<button aria-label="較新一期" onClick={()=>setSelected(currentIndex+1)} style={{border:0,background:'transparent',color:COLORS.accent,padding:0,width:18,fontSize:24,cursor:'pointer'}}>‹</button>}</div>}
+    <div key={compact?"compact":phase?.date||"empty"} onTouchStart={e=>{swipeStart.current=[e.touches[0].clientX,e.touches[0].clientY]}} onTouchEnd={e=>{if(compact||!swipeStart.current)return;const [x,y]=swipeStart.current;const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;swipeStart.current=null;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.5){setSelected(Math.max(0,Math.min(phases.length-1,currentIndex+(dx<0?-1:1))));setDetails(false);}}} style={{animation:compact?'none':'regimenSlide .22s ease-out',touchAction:'pan-y',background:compact?COLORS.accentSoft:COLORS.card,border:`1px solid ${COLORS.line}`,borderRadius:12,padding:compact?14:10,minWidth:0}}> 
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}><div style={{display:'flex',alignItems:'center',gap:7,fontWeight:700,color:COLORS.ink}}><Pill size={17} color={COLORS.accent}/>{compact?'目前用藥組合':'用藥組合觀察'}</div><span style={{fontSize:11,color:COLORS.inkSoft}}>{phase?<><button type="button" onClick={()=>onOpenDiary?.(phase.date,true)} style={{border:0,background:'transparent',padding:0,color:COLORS.accent,font:'inherit',textDecoration:'underline',cursor:'pointer'}}>{phase.date}</button>{` ～ ${phase.end?shiftISO(phase.end,-1):"現在"}`}</>:'尚無變更紀錄'}</span></div>
       {phase&&!compact&&<div style={{fontSize:12,color:COLORS.inkSoft,marginTop:6}}>第 {currentIndex+1} / {phases.length} 期 · {Math.round((Date.parse(phase.end||shiftISO(todayStr(),1))-Date.parse(phase.date))/86400000)} 天</div>}
       <div style={{marginTop:12,padding:12,borderRadius:10,background:COLORS.card}}>{showMeds()}</div>
       {phase?<>
-        <div style={{marginTop:12,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>{compact?'這段時間的狀況':'和上一組有什麼不同？'}</strong><div style={{marginTop:4}}>{summary}</div></div>
-        {!compact&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>最近幾天</strong><div>{recentText}</div></div>}
-        {!compact&&phases.length>1&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85}}><strong>和所有歷史組合比較</strong><div style={{marginTop:4}}>{allSummary}</div></div>}
+        <div style={{marginTop:12,fontSize:13,lineHeight:1.85,color:COLORS.ink}}><strong>{compact?'這段時間的狀況':'和上一組有什麼不同？'}</strong><div style={{marginTop:4}}>{compact?summary:summary.replaceAll("目前","本期")}</div></div>
+        {!compact&&phases.length>1&&<div style={{marginTop:10,fontSize:13,lineHeight:1.85}}><strong>和所有歷史組合比較</strong><div style={{marginTop:4}}>{allSummary.replaceAll("目前","本期")}</div></div>}
         {compact?<button onClick={()=>{const btn=document.querySelector('[data-treatment-open]');if(btn)btn.click();}} style={{border:`1px solid ${COLORS.line}`,background:COLORS.card,color:COLORS.accent,borderRadius:9,padding:'10px 12px',fontSize:13,fontWeight:700,marginTop:12,width:'100%',cursor:'pointer'}}>查看前後組合差異 ›</button>:<>
 
-          <button onClick={()=>setDetails(v=>!v)} style={{border:'none',background:'transparent',color:COLORS.accent,fontSize:13,fontWeight:700,padding:'12px 0 4px',cursor:'pointer'}}>{details?'收起組合明細':'查看上一組與這一組的藥物差異'} ▾</button>
-          {details&&<div style={{background:COLORS.accentSoft,borderRadius:10,padding:12,fontSize:12,lineHeight:1.9}}><strong>上一組：{prior?.date||'開始追蹤前'}</strong><div>{prior?.meds.length?prior.meds.map(m=>`${m.name} ${m.dose}`).join('、'):'沒有完整的上一組用藥資料'}</div><strong>這一組：{phase.date}</strong><div>{phase.meds.length?phase.meds.map(m=>`${m.name} ${m.dose}`).join('、'):'目前未記錄持續用藥'}</div><strong>這次異動</strong><div>{phase.events.map(e=>`${e.name}：${e.before?e.before+' → ':''}${e.after||'停用'}`).join('；')}</div></div>}
           <div style={{fontSize:11,color:COLORS.inkSoft,marginTop:10}}>這是用藥組合期間的健康紀錄比較，不代表變化是某一種藥造成的。飼料及其他未登錄的因素也可能有影響。</div>
           <div style={{fontWeight:700,fontSize:12,marginTop:14,marginBottom:5}}>這個階段的變更紀錄</div>
           {phase.events.map(e=><div key={e.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,fontSize:12,padding:'6px 0',borderTop:`1px solid ${COLORS.line}`}}><span>{e.name} · {e.kind} · {e.after}</span>{role==='owner'&&<div style={{display:'flex',gap:4}}><Btn variant="ghost" onClick={()=>edit(e)}>編輯</Btn><Btn variant="ghost" onClick={()=>onDelete(e.id)}>刪除</Btn></div>}</div>)}
         </>}
       </>:<div style={{fontSize:12,color:COLORS.inkSoft,marginTop:10}}>請到「治療變更」記錄第一次用藥組合。原有每日用藥日記不會被更動。</div>}
+    </div>
+    {!compact&&<div style={{position:'sticky',top:'45vh',paddingTop:12}}>{currentIndex>0&&<button aria-label="較早一期" onClick={()=>setSelected(currentIndex-1)} style={{border:0,background:'transparent',color:COLORS.accent,padding:0,width:18,fontSize:24,cursor:'pointer'}}>›</button>}</div>}
     </div>
     {!compact&&open&&role==='owner'&&<Card><div style={{fontWeight:700,marginBottom:10}}>記錄用藥組合變更</div><div style={{display:'flex',flexDirection:'column',gap:9}}>
       <select value={kind} onChange={e=>setKind(e.target.value)} style={inputStyle}>{['開始服用','增加劑量','減少劑量','調整劑量／頻率','更換藥物／成分','開始保健食品','停藥','恢復服用','其他治療變更'].map(k=><option key={k}>{k}</option>)}</select>
@@ -2396,10 +2394,9 @@ function ProductIssueSummary({ records, products }) {
 }
 
 // ---------- Dashboard ----------
-function MultiFactorTrend({records,products,events,onOpen}) {
-  const [range,setRange]=useState('30');
+function MultiFactorTrend({records,products,events,onOpen,range,setRange,scale,setScale,syncScroll,registerScroll}) {
   const [hidden,setHidden]=useState([]);
-  const [scale,setScale]=useState(22),[selectedDay,setSelectedDay]=useState(null);
+  const [selectedDay,setSelectedDay]=useState(null);
   const scrollRef=useRef(null), pinch=useRef(null), pending=useRef(null);
   useEffect(()=>{const el=scrollRef.current;if(el)el.scrollLeft=el.scrollWidth;},[range]);
   useEffect(()=>{if(pending.current&&scrollRef.current){const q=pending.current;scrollRef.current.scrollLeft=q.day*scale-q.center;pending.current=null;}},[scale]);
@@ -2418,7 +2415,7 @@ function MultiFactorTrend({records,products,events,onOpen}) {
   const value=(r,t)=>t==='食量'?[r.breakfast,r.dinner,r.bedtime].reduce((a,b)=>a+(Number(b)||0),0):t==='精神'?Number(r.mental??3):Number(r.vomit??0);
   return <Card><div style={{fontWeight:700,marginBottom:10}}>多因子健康趨勢</div><div style={{display:'grid',gap:4,gridTemplateColumns:'repeat(4,minmax(0,1fr))'}}>{['14','30','90','all'].map(n=><button key={n} onClick={()=>setRange(n)} style={{...inputStyle,padding:'7px 0',minWidth:0,width:'100%',fontSize:12,background:range===n?COLORS.accentSoft:COLORS.card}}>{n==='all'?'全部':n+'天'}</button>)}</div><div style={{display:'flex',flexWrap:'wrap',gap:'8px 12px',margin:'12px 0'}}>{tracks.map(t=><label key={t} style={{fontSize:12,display:'flex',alignItems:'center',gap:4,textDecoration:'none'}}><input type="checkbox" checked={!hidden.includes(t)} onChange={()=>setHidden(old=>old.includes(t)?old.filter(v=>v!==t):[...old,t])}/>{t.replace('藥物：','')}</label>)}</div>
   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div style={{display:'flex',gap:6}}><button onClick={()=>resize(scale/1.4,0)}>−</button><button onClick={()=>resize(scale*1.4,0)}>＋</button></div><button onClick={()=>{if(scrollRef.current)scrollRef.current.scrollLeft=scrollRef.current.scrollWidth;}}>回到最新</button></div>
-  <div style={{display:'flex',minWidth:0}}><div style={{width:88,flexShrink:0}}>{shown.map(t=><div key={t} style={{height:52,boxSizing:'border-box',fontSize:11,overflowWrap:'anywhere',padding:'4px 5px 0 0',borderBottom:'1px solid '+COLORS.line}}>{t.replace('藥物：','')}{t==='食量'?' (g)':''}{t==='精神'?' (0–5)':''}</div>)}</div><div ref={scrollRef} style={{overflowX:'auto',minWidth:0,flex:1,touchAction:'pan-x pan-y',WebkitOverflowScrolling:'touch'}} onTouchStart={e=>{if(e.touches.length===2){const [a,b]=e.touches;pinch.current={distance:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),scale,center:(a.clientX+b.clientX)/2-e.currentTarget.getBoundingClientRect().left};}}} onTouchMove={e=>{if(e.touches.length===2&&pinch.current){const [a,b]=e.touches,q=pinch.current;resize(q.scale*Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/Math.max(1,q.distance),q.center);}}} onTouchEnd={()=>{pinch.current=null;}} onTouchCancel={()=>{pinch.current=null;}}><svg width={w} height={shown.length*52+30} style={{display:'block'}}>
+  <div style={{display:'flex',minWidth:0}}><div style={{width:88,flexShrink:0}}>{shown.map(t=><div key={t} style={{height:52,boxSizing:'border-box',fontSize:11,overflowWrap:'anywhere',padding:'4px 5px 0 0',borderBottom:'1px solid '+COLORS.line}}>{t.replace('藥物：','')}{t==='食量'?' (g)':''}{t==='精神'?' (0–5)':''}</div>)}</div><div ref={el=>{scrollRef.current=el;registerScroll("multi",el)}} onScroll={e=>syncScroll("multi",e.currentTarget)} style={{overflowX:'auto',minWidth:0,flex:1,touchAction:'pan-x pan-y',WebkitOverflowScrolling:'touch'}} onTouchStart={e=>{if(e.touches.length===2){const [a,b]=e.touches;pinch.current={distance:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),scale,center:(a.clientX+b.clientX)/2-e.currentTarget.getBoundingClientRect().left};}}} onTouchMove={e=>{if(e.touches.length===2&&pinch.current){const [a,b]=e.touches,q=pinch.current;resize(q.scale*Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/Math.max(1,q.distance),q.center);}}} onTouchEnd={()=>{pinch.current=null;}} onTouchCancel={()=>{pinch.current=null;}}><svg width={w} height={shown.length*52+30} style={{display:'block'}}>
   {dates.map((d,i)=> (i===0||i===count-1||i%Math.max(1,Math.ceil(48/step))===0)&&<g key={d}><line x1={x(i)} x2={x(i)} y1={0} y2={shown.length*52} stroke={COLORS.line} strokeDasharray="3 3"/><text x={x(i)} y={shown.length*52+17} fontSize="10" textAnchor="middle" fill={COLORS.inkSoft}>{d.slice(5)}</text></g>)}
   {shown.map((t,j)=>{const y=j*52;const max=t==='食量'?Math.max(60,Math.ceil(Math.max(0,...dates.map(d=>map.has(d)?value(map.get(d),t):0))/20)*20):t==='精神'?5:1;return <g key={t}><line x1={left} x2={w-10} y1={y+42} y2={y+42} stroke={COLORS.line}/>{dates.map((d,i)=>{const r=map.get(d),prev=map.get(dates[i-1]);const xx=x(i);if(t==='食量'||t==='精神'){if(!r)return null;const v=value(r,t),yy=y+40-32*v/max;return <g key={d}>{prev&&<line x1={x(i-1)} y1={y+40-32*value(prev,t)/max} x2={xx} y2={yy} stroke="#7895B9" strokeWidth="1.5"/>}<circle cx={xx} cy={yy} r="2.5" fill="#7895B9" onClick={()=>setSelectedDay(d)}><title>{d}：{v}{t==='食量'?'g':''}</title></circle></g>;}if(t==='大便'||t==='嘔吐'){if(!r)return null;const v=t==='大便'?Number(r.stool):Number(r.vomit??0);return <rect key={d} x={xx-step*.42} y={y+13} width={step*.84} height={22} rx="2" fill={t==='嘔吐'?(v>0?'#B98585':'#DCE5DF'):v>=3&&v<=4?'#8BAE9A':v>=1&&v<=2?'#C5A477':v>=5&&v<=7?'#A99ABD':'#DCE1E8'} onClick={()=>setSelectedDay(d)}><title>{d}：{t==='大便'?'Level ':''}{v}</title></rect>;}const phase=phases.filter(p=>p.date<=d).slice(-1)[0];const label=t==='飼料'?(r?products.find(p=>p.id===r.productId)?.name:''):phase?.meds.find(m=>m.name===t.slice(3))?.dose;if(!label)return null;const priorPhase=phases.filter(p=>p.date<=dates[i-1]).slice(-1)[0];const priorLabel=t==='飼料'?products.find(p=>p.id===prev?.productId)?.name:priorPhase?.meds.find(m=>m.name===t.slice(3))?.dose;return <g key={d}><rect x={xx-step/2} y={y+17} width={step} height={22} fill={(t==='飼料'?['#C8BDA4','#B2A384','#DDD3BB']:['#A5B8D0','#8299B8','#C2CFE0'])[Array.from(label).reduce((a,c)=>a+c.charCodeAt(0),0)%3]} onClick={()=>setSelectedDay(d)}><title>{d}：{label}</title></rect>{(i===0||label!==priorLabel)&&step>=label.length*5+8&&<text x={xx-step/2+2} y={y+12} fontSize="9" fill={COLORS.ink}>{label}</text>}</g>;})}</g>;})}
   {selectedDay&&dates.includes(selectedDay)&&<line x1={x(dates.indexOf(selectedDay))} x2={x(dates.indexOf(selectedDay))} y1={0} y2={shown.length*52} stroke={COLORS.ink} strokeDasharray="4 3" pointerEvents="none"/>}</svg></div></div>{selectedDay&&<div style={{padding:8,background:COLORS.accentSoft,borderRadius:8,margin:'8px 0',fontSize:12}}><b>{selectedDay}</b>{map.has(selectedDay)?<div>食量 {value(map.get(selectedDay),'食量')}g · 大便 {map.get(selectedDay).stool} · 嘔吐 {value(map.get(selectedDay),'嘔吐')}次 · 精神 {value(map.get(selectedDay),'精神')}</div>:<div>無飲食日記</div>}{phases.filter(p=>p.date<=selectedDay).slice(-1)[0]?.meds.map(m=><div key={m.name}>{m.name}：{m.dose}</div>)}{map.has(selectedDay)&&<button onClick={()=>onOpen?.(selectedDay)}>查看當天日記</button>}</div>}<div style={{fontSize:11,color:COLORS.inkSoft}}>偏硬便：棕色 · 正常便：綠色 · 偏軟便：紫色 · 嘔吐：紅色。空白為無紀錄；藥物色帶依治療變更推算，非實際服藥確認。左右滑動查看日期。</div></Card>;
@@ -2426,6 +2423,11 @@ function MultiFactorTrend({records,products,events,onOpen}) {
 
 function Dashboard({ records, products, treatmentEvents=[], role, existingDates, onSaveRecord, onDeleteRecord, onOpenInHistory, onQuickAddProduct, onConfirm, medPresets, medLogs, onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const [expanded, setExpanded] = useState(null); // { metric, date } | null
+  const [range,setRange]=useState('30'),[scale,setScale]=useState(22);
+  const scrolls=useRef({}), syncing=useRef(false), pinchState=useRef(null);
+  const registerScroll=(key,el)=>{if(el)scrolls.current[key]=el;else delete scrolls.current[key];};
+  const syncScroll=(key,el)=>{if(syncing.current)return;syncing.current=true;const max=el.scrollWidth-el.clientWidth;const ratio=max>0?el.scrollLeft/max:1;Object.entries(scrolls.current).forEach(([k,v])=>{if(k!==key){const target=ratio*Math.max(0,v.scrollWidth-v.clientWidth);if(Math.abs(v.scrollLeft-target)>2)v.scrollLeft=target;}});requestAnimationFrame(()=>{syncing.current=false;});};
+  useEffect(()=>{Object.values(scrolls.current).forEach(el=>el.scrollLeft=el.scrollWidth);},[range]);
 
   const chartData = useMemo(() => {
     return [...records]
@@ -2433,7 +2435,7 @@ function Dashboard({ records, products, treatmentEvents=[], role, existingDates,
       .map((r) => ({
         ...r,
         ts: toTs(r.date),
-        total: r.breakfast + r.dinner + r.bedtime,
+        total: [r.breakfast,r.dinner,r.bedtime].reduce((a,b)=>a+(Number(b)||0),0),
         target: products.find((p) => p.id === r.productId)?.dailyTarget || null,
       }));
   }, [records, products]);
@@ -2472,6 +2474,11 @@ function Dashboard({ records, products, treatmentEvents=[], role, existingDates,
 
   const openExpanded = (metric, date) => setExpanded({ metric, date: date || null });
 
+  const trendEnd=todayStr(),trendStart=range==='all'?([...records.map(r=>r.date),...treatmentEvents.map(e=>e.date)].filter(d=>d&&d<=trendEnd).sort()[0]||trendEnd):shiftISO(trendEnd,1-Number(range));
+  const trendCount=Math.max(1,Math.round((Date.parse(trendEnd)-Date.parse(trendStart))/DAY)+1);
+  const byDate=new Map(chartData.map(r=>[r.date,r]));
+  const trendData=Array.from({length:trendCount},(_,i)=>{const date=shiftISO(trendStart,i);return byDate.get(date)||{date,ts:toTs(date),total:null,mental:null,stool:null,vomit:null,target:null};});
+  const trendDomain=[toTs(trendStart)-DAY/2,toTs(trendEnd)+DAY/2];
   const previewData = chartData.slice(-20);
   const previewDomain = paddedDomain(previewData);
 
@@ -2484,8 +2491,7 @@ function Dashboard({ records, products, treatmentEvents=[], role, existingDates,
           {meta.title}
         </div>
         {meta.legend && <TrendLegend series={meta.legend} />}
-        <MetricChart data={data} bands={bands} domain={chartDomain} height={height} products={products} kind={meta.kind}
-          onPointClick={(date) => openExpanded(metric, date)} />
+        <div ref={el=>registerScroll(metric,el)} onScroll={e=>syncScroll(metric,e.currentTarget)} style={{overflowX:'auto',touchAction:'pan-x pan-y',WebkitOverflowScrolling:'touch'}} onTouchStart={e=>{if(e.touches.length===2){const [a,b]=e.touches;pinchState.current={distance:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),scale};}}} onTouchMove={e=>{if(e.touches.length===2&&pinchState.current){const [a,b]=e.touches,q=pinchState.current;setScale(Math.max(9,Math.min(85,q.scale*Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/Math.max(1,q.distance))));}}} onTouchEnd={()=>{pinchState.current=null;}} onTouchCancel={()=>{pinchState.current=null;}}><div style={{width:Math.max(320,trendCount*scale+12)}}><MetricChart data={trendData} bands={bands} domain={trendDomain} height={height} products={products} kind={meta.kind} onPointClick={(date)=>{if(byDate.has(date))openExpanded(metric,date);}} /></div></div>
         <Btn size="sm" variant="secondary" onClick={() => openExpanded(metric, null)} style={{ width: "100%", marginTop: 10 }}>
           <Maximize2 size={14} />展開查看（可縮放／拖曳瀏覽）
         </Btn>
@@ -2495,7 +2501,7 @@ function Dashboard({ records, products, treatmentEvents=[], role, existingDates,
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <MultiFactorTrend records={records} products={products} events={treatmentEvents} onOpen={onOpenInHistory}/>
+      <MultiFactorTrend records={records} products={products} events={treatmentEvents} onOpen={onOpenInHistory} range={range} setRange={setRange} scale={scale} setScale={setScale} syncScroll={syncScroll} registerScroll={registerScroll}/>
       {renderChartCard("health", previewData, previewDomain, 200)}
       <ProductIssueSummary records={records} products={products} />
       {renderChartCard("total", chartData, domain)}
