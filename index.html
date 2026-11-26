@@ -858,7 +858,7 @@ function assumedDiaryRecords(records, products, petName, end) {
   for(let date='2026-08-16';date<=end;date=shiftISO(date,1)) {
     if(existing.has(date)) continue;
     const active=products.filter(p=>p.startDate&&p.startDate<=date&&(!p.endDate||p.endDate>=date)).sort((a,b)=>b.startDate.localeCompare(a.startDate));
-    result.push({id:'assumed-'+date,date,productId:active[0]?.id||'',breakfast:0,dinner:0,bedtime:0,mental:3,stool:4,vomit:0,other:'',stress:'',photos:[],assumedDiary:true});
+    result.push({id:'assumed-'+date,date,productId:active[0]?.id||'',breakfast:0,dinner:0,bedtime:0,mental:4,stool:4,vomit:0,other:'',stress:'',photos:[],assumedDiary:true});
   }
   return result.sort((a,b)=>a.date.localeCompare(b.date));
 }
@@ -1075,7 +1075,9 @@ function MedicationsScreen({ medPresets, role, onAddPreset, onRemovePreset, onUp
 // (startDate reached, not yet ended). products[0] used to win, which is the oldest food
 // ever added — so a new record kept defaulting to a feed that was long since replaced.
 // Falls back to the most recently started product if the date matches no active period.
-function defaultProductForDate(products, date) {
+function defaultProductForDate(products, date, records = []) {
+  const previous = records.find(r => r.date === shiftISO(date, -1) && r.productId && products.some(p => p.id === r.productId));
+  if (previous) return previous.productId;
   if (!products.length) return "";
   const byNewest = [...products].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
   const active = byNewest.find((p) => (!p.startDate || p.startDate <= date) && (!p.endDate || p.endDate >= date));
@@ -1087,7 +1089,8 @@ const recordDraftKey = (id) => `cat-diet-record-draft:${id}`;
 function clearRecordDraft(id) {
   try { localStorage.removeItem(recordDraftKey(id)); } catch (e) { /* private mode */ }
 }
-function RecordForm({ initial, products, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions, onDirtyChange, draftId, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
+const EMPTY_DIARY_RECORDS = [];
+function RecordForm({ initial, products, records = EMPTY_DIARY_RECORDS, existingDates, onSave, onCancel, onDelete, onQuickAddProduct, renderActions, onDirtyChange, draftId, medPresets = [], medLogs = [], onSetDayMeds, onAddManualMed, onRemoveMedLog, onManageMedPresets }) {
   const draftIdentity = draftId || initial?.id || "new";
   const draft = useMemo(() => {
     try {
@@ -1096,13 +1099,13 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
     } catch (e) { return null; }
   }, [draftIdentity, initial?.id]);
   const [date, setDate] = useState(draft?.date ?? initial?.date ?? todayStr());
-  const [productId, setProductId] = useState(draft?.productId ?? initial?.productId ?? defaultProductForDate(products, initial?.date || todayStr()));
+  const [productId, setProductId] = useState(draft?.productId ?? initial?.productId ?? defaultProductForDate(products, initial?.date || todayStr(), records));
   // Once the food is picked by hand, changing the date must not silently re-pick it.
   const productTouched = useRef(!!draft?.productId || !!initial?.productId);
   const [breakfast, setBreakfast] = useState(draft?.breakfast ?? initial?.breakfast ?? 0);
   const [dinner, setDinner] = useState(draft?.dinner ?? initial?.dinner ?? 0);
   const [bedtime, setBedtime] = useState(draft?.bedtime ?? initial?.bedtime ?? 0);
-  const [mental, setMental] = useState(draft?.mental ?? initial?.mental ?? 3);
+  const [mental, setMental] = useState(draft?.mental ?? initial?.mental ?? 4);
   const [stool, setStool] = useState(draft?.stool ?? initial?.stool ?? 4);
   const [vomit, setVomit] = useState(draft?.vomit ?? initial?.vomit ?? 0);
   const [other, setOther] = useState(draft?.other ?? initial?.other ?? "");
@@ -1122,9 +1125,9 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
   // backfilling an older day picks whatever was being fed then, not today's food.
   useEffect(() => {
     if (productTouched.current) return;
-    const next = defaultProductForDate(products, date);
+    const next = defaultProductForDate(products, date, records);
     if (next && next !== productId) setProductId(next);
-  }, [date, products]); // eslint-disable-line
+  }, [date, products, records]); // eslint-disable-line
 
   const total = (Number(breakfast) || 0) + (Number(dinner) || 0) + (Number(bedtime) || 0);
 
@@ -1133,9 +1136,9 @@ function RecordForm({ initial, products, existingDates, onSave, onCancel, onDele
   // flag, so typing something and undoing it doesn't count as unsaved.
   const base = {
     date: initial?.date || todayStr(),
-    productId: initial?.productId || defaultProductForDate(products, initial?.date || todayStr()),
+    productId: initial?.productId || defaultProductForDate(products, initial?.date || todayStr(), records),
     breakfast: initial?.breakfast ?? 0, dinner: initial?.dinner ?? 0, bedtime: initial?.bedtime ?? 0,
-    mental: initial?.mental ?? 3, stool: initial?.stool ?? 4, vomit: initial?.vomit ?? 0,
+    mental: initial?.mental ?? 4, stool: initial?.stool ?? 4, vomit: initial?.vomit ?? 0,
     other: initial?.other || "", stress: initial?.stress || "", photos: initial?.photos || [],
   };
   const dirty =
@@ -2423,7 +2426,7 @@ function MultiFactorTrend({records,products,events,onOpen,range,setRange,scale,s
   const shown=tracks.filter(t=>!hidden.includes(t));
   const left=0,step=scale,w=count*step+12;
   const x=i=>left+(i+.5)*step;
-  const value=(r,t)=>t==='食量'?[r.breakfast,r.dinner,r.bedtime].reduce((a,b)=>a+(Number(b)||0),0):t==='精神'?Number(r.mental??3):Number(r.vomit??0);
+  const value=(r,t)=>t==='食量'?[r.breakfast,r.dinner,r.bedtime].reduce((a,b)=>a+(Number(b)||0),0):t==='精神'?Number(r.mental??4):Number(r.vomit??0);
   return <Card><div style={{fontWeight:700,marginBottom:10}}>多因子健康趨勢</div><div style={{display:'grid',gap:4,gridTemplateColumns:'repeat(4,minmax(0,1fr))'}}>{['14','30','90','all'].map(n=><button key={n} onClick={()=>setRange(n)} style={{...inputStyle,padding:'7px 0',minWidth:0,width:'100%',fontSize:12,background:range===n?COLORS.accentSoft:COLORS.card}}>{n==='all'?'全部':n+'天'}</button>)}</div><div style={{display:'flex',flexWrap:'wrap',gap:'8px 12px',margin:'12px 0'}}>{tracks.map(t=><label key={t} style={{fontSize:12,display:'flex',alignItems:'center',gap:4,textDecoration:'none'}}><input type="checkbox" checked={!hidden.includes(t)} onChange={()=>setHidden(old=>old.includes(t)?old.filter(v=>v!==t):[...old,t])}/>{t.replace('藥物：','')}</label>)}</div>
   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div style={{display:'flex',gap:6}}><button onClick={()=>resize(scale/1.4,0)}>−</button><button onClick={()=>resize(scale*1.4,0)}>＋</button></div><button onClick={()=>{if(scrollRef.current)scrollRef.current.scrollLeft=scrollRef.current.scrollWidth;}}>回到最新</button></div>
   <div style={{display:'flex',minWidth:0}}><div style={{width:88,flexShrink:0}}>{shown.map(t=><div key={t} style={{height:52,boxSizing:'border-box',fontSize:11,overflowWrap:'anywhere',padding:'4px 5px 0 0',borderBottom:'1px solid '+COLORS.line}}>{t.replace('藥物：','')}{t==='食量'?' (g)':''}{t==='精神'?' (0–5)':''}</div>)}</div><div ref={el=>{scrollRef.current=el;registerScroll("multi",el)}} onScroll={e=>syncScroll("multi",e.currentTarget)} style={{overflowX:'auto',minWidth:0,flex:1,touchAction:'pan-x pan-y',WebkitOverflowScrolling:'touch'}} onTouchStart={e=>{if(e.touches.length===2){const [a,b]=e.touches;pinch.current={distance:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),scale,center:(a.clientX+b.clientX)/2-e.currentTarget.getBoundingClientRect().left};}}} onTouchMove={e=>{if(e.touches.length===2&&pinch.current){const [a,b]=e.touches,q=pinch.current;resize(q.scale*Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)/Math.max(1,q.distance),q.center);}}} onTouchEnd={()=>{pinch.current=null;}} onTouchCancel={()=>{pinch.current=null;}}><svg width={w} height={shown.length*52+30} style={{display:'block'}}>
@@ -3029,6 +3032,7 @@ function History({ records, products, treatmentEvents = [], onTreatmentDate, pet
           <RecordForm
             initial={addDate ? { date: addDate } : undefined}
             draftId={`new:${petId}`}
+            records={records}
             products={products}
             existingDates={existingDates}
             onSave={(rec) => { onAddRecord(rec); addDirty.current = false; setAddOpen(false); setAddDate(null); }}
