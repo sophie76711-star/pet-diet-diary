@@ -811,23 +811,23 @@ function phaseMetrics(rs) {
     return { days: rs.length, foodDays: food.length, avg, stools, vomitDays, vomitRecorded: vomitRecorded.length };
 }
 function stoolDescription(stools) {
-    if (!stools.length)
-        return '大便沒有足夠的紀錄';
-    const hard = stools.filter(x => x <= 2).length, normal = stools.filter(x => x === 3 || x === 4).length, soft = stools.filter(x => x >= 5).length;
-    if (normal === stools.length)
-        return '大便紀錄都是正常形態';
-    if (hard > stools.length / 2)
-        return '大便經常偏硬';
-    if (soft > stools.length / 2)
-        return '大便經常偏軟';
-    if (normal > stools.length / 2)
-        return '大便大多是正常形態，但偶爾偏硬或偏軟';
-    return '大便有時偏硬、有時偏軟，形態不太固定';
+    const valid = stools.map(Number).filter(x => Number.isInteger(x) && x >= 1 && x <= 7);
+    if (!valid.length) return '大便沒有足夠的紀錄';
+    const groups = [['正常形態', valid.filter(x => x === 3 || x === 4).length], ['偏硬', valid.filter(x => x <= 2).length], ['偏軟', valid.filter(x => x >= 5).length]];
+    const present = groups.filter(g => g[1] > 0).sort((a,b) => b[1]-a[1]);
+    if (present.length === 1) return '大便紀錄皆為' + present[0][0];
+    return '大便紀錄為' + present.map(g => g[0] + g[1] + '天').join('、');
 }
 function vomitingWords(metrics, prefix = '這段時間') {
     if (!metrics.vomitRecorded)
         return `${prefix}沒有填寫嘔吐紀錄`;
     return metrics.vomitDays ? `${prefix}有記錄到嘔吐` : `${prefix}有日記的日期無嘔吐`;
+}
+function foodTrend(current, baseline) {
+    if (!Number.isFinite(current) || !Number.isFinite(baseline) || current < 0 || baseline < 0) return '無足夠食量紀錄';
+    if (baseline === 0) return current === 0 ? '食量持平' : '食量提升';
+    const change = (current - baseline) / baseline;
+    return change >= 0.1 - 1e-12 ? '食量提升' : change <= -0.1 + 1e-12 ? '食量下降' : '食量持平';
 }
 function compareRegimen(before, after) {
     if (!after.days)
@@ -835,8 +835,7 @@ function compareRegimen(before, after) {
     const parts = [];
     if (after.avg !== null) {
         if (before && before.avg !== null) {
-            const diff = after.avg - before.avg;
-            parts.push(Math.abs(diff) < 3 ? '食量和上一組差不多' : `食量比上一組${diff > 0 ? '多' : '少'}一些`);
+            parts.push(`與上一組相比，本期${foodTrend(after.avg, before.avg)}`);
         }
         else
             parts.push('已經有食量紀錄');
@@ -875,7 +874,7 @@ function overallRegimenComparison(phases, records, currentIndex) {
     const parts = [];
     if (now.metric.avg !== null && food.length) {
         const avg = food.reduce((n, x) => n + x.metric.avg * x.metric.foodDays, 0) / food.reduce((n, x) => n + x.metric.foodDays, 0);
-        parts.push(Math.abs(now.metric.avg - avg) < 3 ? '目前食量和其他組合大致接近' : `目前食量比其他組合平均${now.metric.avg > avg ? '多' : '少'}一些`);
+        parts.push(`與其他用藥組合相比，本期${foodTrend(now.metric.avg, avg)}`);
     }
     const hard = others.filter(x => x.metric.stools.length && x.metric.stools.filter(v => v <= 2).length / x.metric.stools.length > 0.5);
     if (now.metric.stools.length)
@@ -1622,7 +1621,7 @@ function dayLevel(record, products = []) {
         bump("精神偏低");
     if (record.stool <= 2)
         bump("便便偏硬");
-    if (record.stool >= 6)
+    if (record.stool >= 5)
         bump("便便偏軟／腹瀉");
     const ti = targetInfo(record, products);
     // Only a clear shortfall counts. Mild under-eating still shows as text and on the charts,
@@ -2040,7 +2039,7 @@ function MetricChart({ data, bands, domain, height, onPointClick, products, kind
     }
     // events — discrete markers instead of a misleading continuous line; blank days mean nothing happened
     const vomitPts = data.filter((d) => d.vomit > 0).map((d) => ({ ...d, _row: 1 }));
-    const stoolPts = data.filter((d) => d.stool <= 2 || d.stool >= 6).map((d) => ({ ...d, _row: 0 }));
+    const stoolPts = data.filter((d) => d.stool <= 2 || d.stool >= 5).map((d) => ({ ...d, _row: 0 }));
     if (vomitPts.length === 0 && stoolPts.length === 0) {
         return (React.createElement("div", { style: { height, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.inkSoft, fontSize: 12 } }, "\u9019\u6BB5\u671F\u9593\u6C92\u6709\u5614\u5410\u6216\u4FBF\u4FBF\u7570\u5E38\u7D00\u9304"));
     }
@@ -2213,7 +2212,7 @@ function ProductIssueSummary({ records, products }) {
         const days = rs.length;
         const vomitDays = rs.filter((r) => r.vomit > 0).length;
         const vomitTimes = rs.reduce((sum, r) => sum + r.vomit, 0);
-        const loose = rs.filter((r) => r.stool >= 6).length;
+        const loose = rs.filter((r) => r.stool >= 5).length;
         const hard = rs.filter((r) => r.stool <= 2).length;
         const lowMood = rs.filter((r) => r.mental <= 2).length;
         const avg = Math.round(rs.reduce((sum, r) => sum + r.breakfast + r.dinner + r.bedtime, 0) / days);
@@ -2478,7 +2477,7 @@ function Dashboard({ records, products, treatmentEvents = [], role, existingDate
 // and mental 3 were painted gold here while dayLevel counted them as fine — so the same day
 // could look "a bit off" in the list and clean on the calendar.
 const mentalColor = (v) => (v <= 2 ? COLORS.danger : COLORS.accent);
-const stoolColor = (v) => (v <= 2 || v >= 6 ? COLORS.danger : COLORS.accent);
+const stoolColor = (v) => (v <= 2 || v >= 5 ? COLORS.danger : COLORS.accent);
 function StatPill({ tag, value, color }) {
     return (React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11 } },
         React.createElement("span", { style: { color: COLORS.inkSoft } }, tag),
@@ -3037,6 +3036,10 @@ function ExportPanel({ records, products, petName }) {
                 "\u4E0B\u8F09 .xlsx \u6A94\u6848"))));
 }
 // ---------- Conversational feed observation; no scores or causal claims ----------
+function feedVomitingWords(metrics) {
+    if (!metrics.vomitRecorded) return '期間無足夠嘔吐紀錄';
+    return metrics.vomitDays > 0 ? `期間有${metrics.vomitDays}天發生嘔吐` : '期間無嘔吐';
+}
 function HealthSummary({ records, products, medLogs = [], treatmentEvents = [], onOpenDiary }) {
     const [selected, setSelected] = useState('');
     const ordered = (records || []).filter(r => r.date && r.date <= todayStr() && r.productId).slice().sort((a, b) => a.date.localeCompare(b.date));
@@ -3057,22 +3060,15 @@ function HealthSummary({ records, products, medLogs = [], treatmentEvents = [], 
         const withFood = otherMetrics.filter(g => g.metric.avg !== null);
         if (now.avg !== null && withFood.length) {
             const otherAvg = withFood.reduce((a, g) => a + g.metric.avg * g.metric.foodDays, 0) / withFood.reduce((a, g) => a + g.metric.foodDays, 0);
-            parts.push(Math.abs(now.avg - otherAvg) < 3 ? `吃${productName}時，食量和其他飼料大致接近` : `吃${productName}時，平均食量比其他飼料${now.avg > otherAvg ? '多' : '少'}一些`);
-        }
-        if (now.stools.length) {
-            const otherStools = otherMetrics.flatMap(g => g.metric.stools);
-            parts.push(otherStools.length ? `這款${stoolDescription(now.stools)}；其他飼料期間${stoolDescription(otherStools)}` : `這款${stoolDescription(now.stools)}`);
+            parts.push(`與其他飼料相比，吃${productName}期間${foodTrend(now.avg, otherAvg)}`);
         }
     }
     else {
         parts.push(`目前只有${productName}的紀錄，還沒有其他飼料能比較`);
-        if (now.stools.length)
-            parts.push(stoolDescription(now.stools));
     }
-    parts.push(vomitingWords(now, `吃${productName}期間`));
-    const otherDays = otherMetrics.reduce((a, g) => a + g.metric.days, 0), otherV = otherMetrics.reduce((a, g) => a + g.metric.vomitDays, 0);
-    if (otherDays)
-        parts.push(`其他飼料有日記的日期中，${otherV}／${otherDays}天有嘔吐`);
+    if (now.stools.length)
+        parts.push(stoolDescription(now.stools));
+    parts.push(feedVomitingWords(now));
     const start = trial[0]?.date || '9999-12-31';
     const end = trial[trial.length - 1]?.date || start;
     const dates = new Set(trial.map(r => r.date));
